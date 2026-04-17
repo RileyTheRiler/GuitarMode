@@ -1,0 +1,61 @@
+"use client";
+
+type Props = {
+  boxOn: boolean;
+  boxCenterFret: number;
+  boxWindow: number;
+  onBoxOnChange: (on: boolean) => void;
+  onCenterChange: (fret: number) => void;
+  onWindowChange: (w: number) => void;
+  numFrets: number;
+};
+
+export function FretboardControls({
+  boxOn,
+  boxCenterFret,
+  boxWindow,
+  onBoxOnChange,
+  onCenterChange,
+  onWindowChange,
+  numFrets,
+}: Props) {
+  return (
+    <div className="flex flex-wrap items-center gap-4 text-xs text-zinc-400">
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={boxOn}
+          onChange={(e) => onBoxOnChange(e.target.checked)}
+        />
+        CAGED box (focus around one fret)
+      </label>
+      <label className={`flex items-center gap-2 ${boxOn ? "" : "opacity-50"}`}>
+        Center fret
+        <input
+          type="range"
+          min={0}
+          max={numFrets}
+          step={1}
+          value={boxCenterFret}
+          onChange={(e) => onCenterChange(Number(e.target.value))}
+          disabled={!boxOn}
+        />
+        <span className="w-8 text-right text-zinc-200">{boxCenterFret}</span>
+      </label>
+      <label className={`flex items-center gap-2 ${boxOn ? "" : "opacity-50"}`}>
+        Window
+        <select
+          className="rounded bg-zinc-800 px-2 py-1 text-zinc-100 disabled:opacity-50"
+          value={boxWindow}
+          onChange={(e) => onWindowChange(Number(e.target.value))}
+          disabled={!boxOn}
+        >
+          <option value={3}>±3</option>
+          <option value={4}>±4</option>
+          <option value={5}>±5</option>
+          <option value={6}>±6</option>
+        </select>
+      </label>
+    </div>
+  );
+}

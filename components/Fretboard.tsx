@@ -8,6 +8,13 @@ type Props = {
   playedPitchClasses: Set<number>;
   scalePitchClasses?: Set<number>;
   rootPitchClass?: number | null;
+  // CAGED / box mode. When set, only frets within [center-window, center+window]
+  // (plus open strings) are rendered as note circles.
+  boxCenterFret?: number | null;
+  boxWindow?: number;
+  // Called when a fret position is clicked; the consumer decides whether to
+  // audition the note.
+  onFretClick?: (stringIndex: number, fret: number, midi: number) => void;
 };
 
 const DOUBLE_MARKERS = new Set([12, 24]);
@@ -18,10 +25,13 @@ export function Fretboard({
   playedPitchClasses,
   scalePitchClasses,
   rootPitchClass,
+  boxCenterFret,
+  boxWindow = 5,
+  onFretClick,
 }: Props) {
   const numStrings = STANDARD_TUNING.length;
   const nutWidth = 10;
-  const leftPad = 44; // room for open-string labels
+  const leftPad = 44;
   const rightPad = 16;
   const topPad = 24;
   const bottomPad = 24;
@@ -34,33 +44,62 @@ export function Fretboard({
   const height = topPad + boardHeight + bottomPad;
 
   const stringY = (i: number) => topPad + (numStrings - 1 - i) * stringSpacing;
-  // Center of a fret position: 0 = open (on the nut), n = between fret n-1 and n
   const fretX = (fret: number) => {
     if (fret === 0) return leftPad - 20;
     return leftPad + nutWidth + (fret - 0.5) * fretWidth;
   };
-  // Fret line x (between positions)
   const fretLineX = (fret: number) => leftPad + nutWidth + fret * fretWidth;
 
+  const inBox = (fret: number) => {
+    if (boxCenterFret == null) return true;
+    if (fret === 0) return true; // open strings always allowed
+    return fret >= boxCenterFret - boxWindow && fret <= boxCenterFret + boxWindow;
+  };
+
   const circles: React.ReactNode[] = [];
+  const hitTargets: React.ReactNode[] = [];
   for (let s = 0; s < numStrings; s++) {
     for (let f = 0; f <= numFrets; f++) {
       const pos = getNoteAt(s, f);
       const isPlayed = playedPitchClasses.has(pos.pitchClass);
       const isInScale = scalePitchClasses?.has(pos.pitchClass) ?? false;
       const isRoot = rootPitchClass != null && pos.pitchClass === rootPitchClass;
-
-      if (!isPlayed && !isInScale) continue;
+      const visible = inBox(f) && (isPlayed || isInScale);
 
       const cx = fretX(f);
       const cy = stringY(s);
+
+      if (onFretClick) {
+        hitTargets.push(
+          <rect
+            key={`hit-${s}-${f}`}
+            x={f === 0 ? leftPad - 32 : leftPad + nutWidth + (f - 1) * fretWidth}
+            y={cy - stringSpacing / 2}
+            width={f === 0 ? 24 : fretWidth}
+            height={stringSpacing}
+            fill="transparent"
+            cursor="pointer"
+            onClick={() => onFretClick(s, f, pos.midi)}
+          />
+        );
+      }
+
+      if (!visible) continue;
+
       const color = colorForPitchClass(pos.pitchClass);
       const r = 11;
 
       circles.push(
-        <g key={`note-${s}-${f}`}>
+        <g key={`note-${s}-${f}`} pointerEvents="none">
           {isPlayed ? (
-            <circle cx={cx} cy={cy} r={r} fill={color} stroke={isRoot ? "#fff" : color} strokeWidth={isRoot ? 2.5 : 1} />
+            <circle
+              cx={cx}
+              cy={cy}
+              r={r}
+              fill={color}
+              stroke={isRoot ? "#fff" : color}
+              strokeWidth={isRoot ? 2.5 : 1}
+            />
           ) : (
             <circle
               cx={cx}
@@ -94,7 +133,6 @@ export function Fretboard({
         style={{ minWidth: width, maxWidth: "100%", height: "auto" }}
         aria-label="Guitar fretboard"
       >
-        {/* Wood-tone board background */}
         <rect
           x={leftPad + nutWidth}
           y={topPad - 10}
@@ -103,6 +141,21 @@ export function Fretboard({
           fill="#2a1b10"
           rx={4}
         />
+
+        {/* CAGED box highlight */}
+        {boxCenterFret != null && (
+          <rect
+            x={fretLineX(Math.max(0, boxCenterFret - boxWindow))}
+            y={topPad - 10}
+            width={
+              fretLineX(Math.min(numFrets, boxCenterFret + boxWindow)) -
+              fretLineX(Math.max(0, boxCenterFret - boxWindow))
+            }
+            height={boardHeight + 20}
+            fill="#fbbf24"
+            opacity={0.08}
+          />
+        )}
 
         {/* Inlay markers */}
         {Array.from({ length: numFrets }, (_, idx) => idx + 1).map((f) => {
@@ -183,6 +236,10 @@ export function Fretboard({
             {f}
           </text>
         ))}
+
+        {/* Hit targets (rendered beneath circles in DOM order so circles
+            don't steal the click). */}
+        {hitTargets}
 
         {/* Note circles */}
         {circles}

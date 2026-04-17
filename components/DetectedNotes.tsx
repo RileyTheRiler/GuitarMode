@@ -17,12 +17,20 @@ export function DetectedNotes({ notes }: { notes: DetectedNote[] }) {
         <span
           key={`${n.at}-${i}`}
           className="inline-flex items-center gap-2 rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-sm text-zinc-100"
+          title={`${n.durationMs.toFixed(0)} ms`}
         >
           <span
             className="h-3 w-3 rounded-full"
             style={{ backgroundColor: colorForPitchClass(n.pitchClass) }}
           />
           {n.noteName}
+          {n.durationMs > 0 && (
+            <span className="text-[10px] text-zinc-400">
+              {n.durationMs >= 1000
+                ? `${(n.durationMs / 1000).toFixed(1)}s`
+                : `${n.durationMs.toFixed(0)}ms`}
+            </span>
+          )}
         </span>
       ))}
     </div>

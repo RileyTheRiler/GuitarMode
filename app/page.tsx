@@ -3,12 +3,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MicControls } from "@/components/MicControls";
 import { Fretboard } from "@/components/Fretboard";
+import { FretboardControls } from "@/components/FretboardControls";
 import { DetectedNotes } from "@/components/DetectedNotes";
 import { ScaleSuggestions } from "@/components/ScaleSuggestions";
+import { InputSettings } from "@/components/InputSettings";
+import { Timeline } from "@/components/Timeline";
 import { useMicStream } from "@/lib/audio/useMicStream";
 import { usePitchDetector, type DetectedNote } from "@/lib/audio/usePitchDetector";
 import { analyzeAudioBuffer, decodeArrayBuffer } from "@/lib/audio/analyzeBuffer";
 import { detectScales } from "@/lib/music/detectScale";
+import { buildProfile, profilePitchClassSet } from "@/lib/music/profile";
+import { playPluck } from "@/lib/audio/tonePlayer";
+
+const NUM_FRETS = 22;
 
 export default function Home() {
   const mic = useMicStream();
@@ -19,24 +26,23 @@ export default function Home() {
   const [fileError, setFileError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
+  const [boxOn, setBoxOn] = useState(false);
+  const [boxCenterFret, setBoxCenterFret] = useState(7);
+  const [boxWindow, setBoxWindow] = useState(5);
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
 
-  const playedPitchClasses = useMemo(() => {
-    const s = new Set<number>();
-    for (const n of detector.notes) s.add(n.pitchClass);
-    return s;
-  }, [detector.notes]);
+  const profile = useMemo(
+    () => buildProfile(detector.notes, detector.chromaProfile, 1),
+    [detector.notes, detector.chromaProfile]
+  );
+  const playedPitchClasses = useMemo(() => profilePitchClassSet(profile), [profile]);
+  const matches = useMemo(() => detectScales(profile, 5), [profile]);
 
-  const matches = useMemo(() => detectScales(playedPitchClasses, 5), [playedPitchClasses]);
-
-  // Reset the selected scale when matches change shape significantly.
   useEffect(() => {
-    if (matches.length === 0) {
-      setSelectedIndex(null);
-    } else if (selectedIndex == null || selectedIndex >= matches.length) {
-      setSelectedIndex(0);
-    }
+    if (matches.length === 0) setSelectedIndex(null);
+    else if (selectedIndex == null || selectedIndex >= matches.length) setSelectedIndex(0);
   }, [matches, selectedIndex]);
 
   const selected = selectedIndex != null ? matches[selectedIndex] ?? null : null;
@@ -48,12 +54,29 @@ export default function Home() {
       return;
     }
     try {
-      const stream = await mic.start();
+      const stream = await mic.start(mic.currentDeviceId);
       await detector.start(stream);
     } catch {
-      /* error already surfaced via mic.error */
+      /* error surfaced via mic.error */
     }
   }, [detector, mic]);
+
+  const handleDeviceChange = useCallback(
+    async (id: string) => {
+      const nextId = id === "" ? null : id;
+      const wasActive = detector.active;
+      if (wasActive) {
+        detector.stop();
+      }
+      try {
+        const stream = await mic.start(nextId);
+        if (wasActive) await detector.start(stream);
+      } catch {
+        /* error surfaced via mic.error */
+      }
+    },
+    [detector, mic]
+  );
 
   const handleReset = useCallback(() => {
     detector.reset();
@@ -68,9 +91,15 @@ export default function Home() {
       try {
         const arr = await file.arrayBuffer();
         const buffer = await decodeArrayBuffer(arr);
-        const notes = await analyzeAudioBuffer(buffer);
+        const result = await analyzeAudioBuffer(buffer, {
+          a4Hz: detector.config.a4Hz,
+          polyphonic: detector.config.polyphonic,
+          minClarity: detector.config.minClarity,
+          minRms: detector.config.minRms,
+        });
         detector.reset();
-        detector.addNotes(notes);
+        detector.addNotes(result.notes);
+        if (result.chroma.some((v) => v > 0)) detector.addChroma(result.chroma);
       } catch (e) {
         setFileError(e instanceof Error ? e.message : "Could not analyze file");
       } finally {
@@ -83,7 +112,7 @@ export default function Home() {
   const handleStartRecording = useCallback(async () => {
     setFileError(null);
     try {
-      const stream = mic.streamRef.current ?? (await mic.start());
+      const stream = mic.streamRef.current ?? (await mic.start(mic.currentDeviceId));
       const recorder = new MediaRecorder(stream);
       recordedChunksRef.current = [];
       recorder.ondataavailable = (ev) => {
@@ -96,9 +125,16 @@ export default function Home() {
         try {
           const arr = await blob.arrayBuffer();
           const buffer = await decodeArrayBuffer(arr);
-          const notes: DetectedNote[] = await analyzeAudioBuffer(buffer);
+          const result = await analyzeAudioBuffer(buffer, {
+            a4Hz: detector.config.a4Hz,
+            polyphonic: detector.config.polyphonic,
+            minClarity: detector.config.minClarity,
+            minRms: detector.config.minRms,
+          });
+          const newNotes: DetectedNote[] = result.notes;
           detector.reset();
-          detector.addNotes(notes);
+          detector.addNotes(newNotes);
+          if (result.chroma.some((v) => v > 0)) detector.addChroma(result.chroma);
         } catch (e) {
           setFileError(e instanceof Error ? e.message : "Could not analyze recording");
         } finally {
@@ -125,16 +161,24 @@ export default function Home() {
     [selected]
   );
 
+  const handleFretClick = useCallback(
+    (_s: number, _f: number, midi: number) => {
+      playPluck(midi, detector.config.a4Hz);
+    },
+    [detector.config.a4Hz]
+  );
+
   return (
     <main className="mx-auto max-w-6xl px-4 py-8">
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">GuitarMode</h1>
         <p className="text-sm text-zinc-400">
-          Play your guitar. I&rsquo;ll name the notes, guess the scale, and show you what&rsquo;s next on the fretboard.
+          Play your guitar. I&rsquo;ll name the notes, guess the scale, and show you what&rsquo;s
+          next on the fretboard.
         </p>
       </header>
 
-      <section className="mb-6 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+      <section className="mb-4 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
         <MicControls
           micOn={detector.active}
           onToggleMic={handleToggleMic}
@@ -146,6 +190,17 @@ export default function Home() {
           analyzing={analyzing}
           level={detector.level}
           error={mic.error ?? fileError}
+        />
+      </section>
+
+      <section className="mb-6">
+        <InputSettings
+          config={detector.config}
+          onChange={detector.setConfig}
+          devices={mic.devices}
+          currentDeviceId={mic.currentDeviceId}
+          onDeviceChange={handleDeviceChange}
+          micOn={detector.active}
         />
       </section>
 
@@ -169,23 +224,50 @@ export default function Home() {
         </div>
       </section>
 
+      <section className="mb-6 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
+            Timeline
+          </h2>
+          <p className="text-xs text-zinc-500">
+            Height = pitch, width = how long you held the note.
+          </p>
+        </div>
+        <Timeline notes={detector.notes} />
+      </section>
+
       <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
-          Fretboard
-        </h2>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
+            Fretboard
+          </h2>
+          <FretboardControls
+            boxOn={boxOn}
+            boxCenterFret={boxCenterFret}
+            boxWindow={boxWindow}
+            onBoxOnChange={setBoxOn}
+            onCenterChange={setBoxCenterFret}
+            onWindowChange={setBoxWindow}
+            numFrets={NUM_FRETS}
+          />
+        </div>
         <Fretboard
+          numFrets={NUM_FRETS}
           playedPitchClasses={playedPitchClasses}
           scalePitchClasses={scaleSet}
           rootPitchClass={selected?.root ?? null}
+          boxCenterFret={boxOn ? boxCenterFret : null}
+          boxWindow={boxWindow}
+          onFretClick={handleFretClick}
         />
         <p className="mt-3 text-xs text-zinc-500">
           Solid circles = notes you played. Outlined circles = other notes in the selected scale.
-          The thicker ring marks the scale&rsquo;s root.
+          Click any fret to audition it.
         </p>
       </section>
 
       <footer className="mt-8 text-xs text-zinc-500">
-        Clean tone works best. Mic access requires HTTPS (Vercel provides it automatically, and localhost works for dev).
+        Clean tone works best. Mic access requires HTTPS (Vercel provides it automatically; localhost works for dev).
       </footer>
     </main>
   );

@@ -15,12 +15,14 @@ export const NOTE_NAMES = [
 
 export type PitchClass = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
 
-export function freqToMidi(freq: number): number {
-  return 69 + 12 * Math.log2(freq / 440);
+export const DEFAULT_A4_HZ = 440;
+
+export function freqToMidi(freq: number, a4Hz: number = DEFAULT_A4_HZ): number {
+  return 69 + 12 * Math.log2(freq / a4Hz);
 }
 
-export function midiToFreq(midi: number): number {
-  return 440 * Math.pow(2, (midi - 69) / 12);
+export function midiToFreq(midi: number, a4Hz: number = DEFAULT_A4_HZ): number {
+  return a4Hz * Math.pow(2, (midi - 69) / 12);
 }
 
 export function midiToNoteName(midi: number): string {
