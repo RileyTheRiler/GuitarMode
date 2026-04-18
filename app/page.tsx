@@ -8,6 +8,8 @@ import { DetectedNotes } from "@/components/DetectedNotes";
 import { ScaleSuggestions } from "@/components/ScaleSuggestions";
 import { InputSettings } from "@/components/InputSettings";
 import { Timeline } from "@/components/Timeline";
+import { ChromaChart } from "@/components/ChromaChart";
+import { WaveformPlayer } from "@/components/WaveformPlayer";
 import { useMicStream } from "@/lib/audio/useMicStream";
 import { usePitchDetector, type DetectedNote } from "@/lib/audio/usePitchDetector";
 import { analyzeAudioBuffer, decodeArrayBuffer } from "@/lib/audio/analyzeBuffer";
@@ -25,6 +27,7 @@ export default function Home() {
   const [recording, setRecording] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [lastAudioBuffer, setLastAudioBuffer] = useState<AudioBuffer | null>(null);
 
   const [boxOn, setBoxOn] = useState(false);
   const [boxCenterFret, setBoxCenterFret] = useState(7);
@@ -82,6 +85,7 @@ export default function Home() {
     detector.reset();
     setSelectedIndex(null);
     setFileError(null);
+    setLastAudioBuffer(null);
   }, [detector]);
 
   const handleUpload = useCallback(
@@ -100,6 +104,7 @@ export default function Home() {
         detector.reset();
         detector.addNotes(result.notes);
         if (result.chroma.some((v) => v > 0)) detector.addChroma(result.chroma);
+        setLastAudioBuffer(buffer);
       } catch (e) {
         setFileError(e instanceof Error ? e.message : "Could not analyze file");
       } finally {
@@ -135,6 +140,7 @@ export default function Home() {
           detector.reset();
           detector.addNotes(newNotes);
           if (result.chroma.some((v) => v > 0)) detector.addChroma(result.chroma);
+          setLastAudioBuffer(buffer);
         } catch (e) {
           setFileError(e instanceof Error ? e.message : "Could not analyze recording");
         } finally {
@@ -167,6 +173,8 @@ export default function Home() {
     },
     [detector.config.a4Hz]
   );
+
+  const hasChroma = detector.chromaProfile.some((v) => v > 0);
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-8">
@@ -206,10 +214,22 @@ export default function Home() {
 
       <section className="mb-6 grid gap-6 lg:grid-cols-2">
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
-            Detected notes
-          </h2>
-          <DetectedNotes notes={detector.notes} />
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
+              Detected notes
+            </h2>
+            {detector.currentNote && (
+              <span className="flex items-center gap-1.5 text-xs text-zinc-300">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                </span>
+                {detector.currentNote.noteName}
+              </span>
+            )}
+          </div>
+          <DetectedNotes notes={detector.notes} onDelete={detector.deleteNote} />
+          {lastAudioBuffer && <WaveformPlayer audioBuffer={lastAudioBuffer} />}
         </div>
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
@@ -221,6 +241,11 @@ export default function Home() {
             onSelect={setSelectedIndex}
             detectedCount={playedPitchClasses.size}
           />
+          {hasChroma && (
+            <div className="mt-4">
+              <ChromaChart chroma={detector.chromaProfile} />
+            </div>
+          )}
         </div>
       </section>
 
@@ -256,13 +281,14 @@ export default function Home() {
           playedPitchClasses={playedPitchClasses}
           scalePitchClasses={scaleSet}
           rootPitchClass={selected?.root ?? null}
+          currentPitchClass={detector.currentNote?.pitchClass ?? null}
           boxCenterFret={boxOn ? boxCenterFret : null}
           boxWindow={boxWindow}
           onFretClick={handleFretClick}
         />
         <p className="mt-3 text-xs text-zinc-500">
           Solid circles = notes you played. Outlined circles = other notes in the selected scale.
-          Click any fret to audition it.
+          Pulsing = currently playing. Click any fret to audition it.
         </p>
       </section>
 
