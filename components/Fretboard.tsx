@@ -9,6 +9,10 @@ type Props = {
   scalePitchClasses?: Set<number>;
   rootPitchClass?: number | null;
   currentPitchClass?: number | null;
+  chordPitchClasses?: Set<number>;
+  chordRootPitchClass?: number | null;
+  chordThirdPitchClass?: number | null;
+  chordFifthPitchClass?: number | null;
   boxCenterFret?: number | null;
   boxWindow?: number;
   onFretClick?: (stringIndex: number, fret: number, midi: number) => void;
@@ -23,10 +27,15 @@ export function Fretboard({
   scalePitchClasses,
   rootPitchClass,
   currentPitchClass,
+  chordPitchClasses,
+  chordRootPitchClass,
+  chordThirdPitchClass,
+  chordFifthPitchClass,
   boxCenterFret,
   boxWindow = 5,
   onFretClick,
 }: Props) {
+  const chordActive = !!chordPitchClasses && chordPitchClasses.size > 0;
   const numStrings = STANDARD_TUNING.length;
   const nutWidth = 10;
   const leftPad = 44;
@@ -63,7 +72,16 @@ export function Fretboard({
       const isInScale = scalePitchClasses?.has(pos.pitchClass) ?? false;
       const isRoot = rootPitchClass != null && pos.pitchClass === rootPitchClass;
       const isLive = currentPitchClass != null && pos.pitchClass === currentPitchClass;
-      const visible = inBox(f) && (isPlayed || isInScale || isLive);
+      const isChordTone = chordActive && chordPitchClasses!.has(pos.pitchClass);
+      const isChordRoot =
+        chordActive && chordRootPitchClass != null && pos.pitchClass === chordRootPitchClass;
+      const isChordThird =
+        chordActive && chordThirdPitchClass != null && pos.pitchClass === chordThirdPitchClass;
+      const isChordFifth =
+        chordActive && chordFifthPitchClass != null && pos.pitchClass === chordFifthPitchClass;
+      // Chord tones override the box focus so they stay visible outside the window.
+      const visible =
+        (inBox(f) && (isPlayed || isInScale || isLive)) || isChordTone;
 
       const cx = fretX(f);
       const cy = stringY(s);
@@ -86,10 +104,16 @@ export function Fretboard({
       if (!visible) continue;
 
       const color = colorForPitchClass(pos.pitchClass);
-      const r = 11;
+      const baseR = 11;
+      const r = isChordTone ? 12 : baseR;
+      // Dim scale-only tones when a chord is active; chord tones stay bright.
+      let groupOpacity = 1;
+      if (chordActive && !isChordTone && !isLive) {
+        groupOpacity = isPlayed ? 0.6 : 0.35;
+      }
 
       circles.push(
-        <g key={`note-${s}-${f}`} pointerEvents="none">
+        <g key={`note-${s}-${f}`} pointerEvents="none" opacity={groupOpacity}>
           {/* Pulsing ring for the live note */}
           {isLive && (
             <circle cx={cx} cy={cy} r={r + 5} fill="none" stroke={color} strokeWidth={2}>
@@ -107,24 +131,32 @@ export function Fretboard({
               />
             </circle>
           )}
+          {/* Chord-root white halo */}
+          {isChordRoot && (
+            <circle cx={cx} cy={cy} r={r + 4} fill="none" stroke="#fff" strokeWidth={1.5} opacity={0.5} />
+          )}
+          {/* Chord-third gold accent — the sweet resolution note */}
+          {isChordThird && (
+            <circle cx={cx} cy={cy} r={r + 3} fill="none" stroke="#fbbf24" strokeWidth={2} />
+          )}
           {isPlayed ? (
             <circle
               cx={cx}
               cy={cy}
               r={r}
               fill={color}
-              stroke={isRoot ? "#fff" : color}
-              strokeWidth={isRoot ? 2.5 : 1}
+              stroke={isChordRoot ? "#fff" : isRoot ? "#fff" : color}
+              strokeWidth={isChordRoot ? 3 : isChordTone ? 2.5 : isRoot ? 2.5 : 1}
             />
           ) : (
             <circle
               cx={cx}
               cy={cy}
               r={r}
-              fill={isLive ? color : "#0a0a0a"}
-              stroke={color}
-              strokeWidth={isRoot ? 3 : 2}
-              opacity={isLive ? 0.85 : 1}
+              fill={isLive || isChordTone ? color : "#0a0a0a"}
+              stroke={isChordRoot ? "#fff" : color}
+              strokeWidth={isChordRoot ? 3 : isChordTone ? 2.5 : isRoot ? 3 : 2}
+              opacity={isLive && !isChordTone ? 0.85 : 1}
             />
           )}
           <text
@@ -132,8 +164,8 @@ export function Fretboard({
             y={cy + 3.5}
             textAnchor="middle"
             fontSize={10}
-            fontWeight={isRoot ? 700 : 500}
-            fill={isPlayed || isLive ? "#0a0a0a" : color}
+            fontWeight={isChordRoot || isRoot ? 700 : 500}
+            fill={isPlayed || isLive || isChordTone ? "#0a0a0a" : color}
           >
             {pitchClassName(pos.pitchClass)}
           </text>

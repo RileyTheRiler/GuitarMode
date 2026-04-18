@@ -6,6 +6,9 @@ import { DEFAULT_A4_HZ, freqToMidi, midiToNoteName, midiToPitchClass } from "../
 import { computeChroma } from "./chroma";
 import { radix2FFT } from "./fft";
 import { octaveCorrect } from "./octaveCorrect";
+import { extractHarmonics, normalizeHarmonics } from "./timbre";
+
+const NUM_HARMONICS = 8;
 
 export type DetectedNote = {
   midi: number;
@@ -83,6 +86,7 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
   const [level, setLevel] = useState(0);
   const [notes, setNotes] = useState<DetectedNote[]>([]);
   const [chromaProfile, setChromaProfile] = useState<number[]>(() => Array(12).fill(0));
+  const [harmonics, setHarmonics] = useState<number[]>(() => Array(NUM_HARMONICS).fill(0));
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -123,6 +127,8 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
   const chromaDirtyRef = useRef(false);
   const chromaFlushAtRef = useRef(0);
   const levelFlushAtRef = useRef(0);
+  const harmonicVectorRef = useRef<number[]>(Array(NUM_HARMONICS).fill(0));
+  const harmonicsDirtyRef = useRef(false);
 
   const setConfig = useCallback((patch: Partial<PitchDetectorConfig>) => {
     setConfigState((prev) => {
@@ -282,11 +288,23 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
         for (let i = 0; i < 12; i++) accum[i] += c[i];
         chromaDirtyRef.current = true;
 
+        // Harmonic envelope for the currently-active note — reuse freqDb
+        // so we don't run a second FFT.
+        if (activeMidiRef.current != null && activeFreqRef.current > 0) {
+          const raw = extractHarmonics(fdb, ctx.sampleRate, activeFreqRef.current, NUM_HARMONICS);
+          harmonicVectorRef.current = normalizeHarmonics(raw);
+          harmonicsDirtyRef.current = true;
+        }
+
         if (now - chromaFlushAtRef.current > 100) {
           chromaFlushAtRef.current = now;
           if (chromaDirtyRef.current) {
             setChromaProfile([...accum]);
             chromaDirtyRef.current = false;
+          }
+          if (harmonicsDirtyRef.current) {
+            setHarmonics([...harmonicVectorRef.current]);
+            harmonicsDirtyRef.current = false;
           }
         }
       }
@@ -437,8 +455,11 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
     setNotes([]);
     setCurrentNote(null);
     setChromaProfile(Array(12).fill(0));
+    setHarmonics(Array(NUM_HARMONICS).fill(0));
     chromaAccumRef.current = Array(12).fill(0);
     chromaDirtyRef.current = false;
+    harmonicVectorRef.current = Array(NUM_HARMONICS).fill(0);
+    harmonicsDirtyRef.current = false;
     candidateMidiRef.current = null;
     candidateCountRef.current = 0;
     // Reset adaptive gate so it re-calibrates on next session
@@ -485,5 +506,6 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
     config,
     setConfig,
     chromaProfile,
+    harmonics,
   };
 }

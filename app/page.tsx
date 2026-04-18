@@ -10,12 +10,20 @@ import { InputSettings } from "@/components/InputSettings";
 import { Timeline } from "@/components/Timeline";
 import { ChromaChart } from "@/components/ChromaChart";
 import { WaveformPlayer } from "@/components/WaveformPlayer";
+import { ProgressionEditor } from "@/components/ProgressionEditor";
+import { TimbreVisualizer } from "@/components/TimbreVisualizer";
 import { useMicStream } from "@/lib/audio/useMicStream";
 import { usePitchDetector, type DetectedNote } from "@/lib/audio/usePitchDetector";
 import { analyzeAudioBuffer, decodeArrayBuffer } from "@/lib/audio/analyzeBuffer";
 import { detectScales } from "@/lib/music/detectScale";
 import { buildProfile, profilePitchClassSet } from "@/lib/music/profile";
 import { playPluck } from "@/lib/audio/tonePlayer";
+import {
+  activeChordAt,
+  sortProgression,
+  type ChordEvent,
+} from "@/lib/music/progression";
+import { chordPitchClasses, parseChord } from "@/lib/music/chords";
 
 const NUM_FRETS = 22;
 
@@ -32,6 +40,21 @@ export default function Home() {
   const [boxOn, setBoxOn] = useState(false);
   const [boxCenterFret, setBoxCenterFret] = useState(7);
   const [boxWindow, setBoxWindow] = useState(5);
+
+  const [progression, setProgressionState] = useState<ChordEvent[]>([]);
+  const [currentChord, setCurrentChord] = useState<ChordEvent | null>(null);
+
+  const setProgression = useCallback((next: ChordEvent[]) => {
+    const sorted = sortProgression(next);
+    setProgressionState(sorted);
+    setCurrentChord(null);
+  }, []);
+
+  const chordInfo = useMemo(() => {
+    if (!currentChord) return null;
+    const parsed = parseChord(currentChord.chord);
+    return parsed ? chordPitchClasses(parsed.root, parsed.quality) : null;
+  }, [currentChord]);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
@@ -229,7 +252,12 @@ export default function Home() {
             )}
           </div>
           <DetectedNotes notes={detector.notes} onDelete={detector.deleteNote} />
-          {lastAudioBuffer && <WaveformPlayer audioBuffer={lastAudioBuffer} />}
+          {lastAudioBuffer && (
+            <WaveformPlayer
+              audioBuffer={lastAudioBuffer}
+              onTimeUpdate={(t) => setCurrentChord(activeChordAt(progression, t))}
+            />
+          )}
         </div>
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
@@ -246,6 +274,16 @@ export default function Home() {
               <ChromaChart chroma={detector.chromaProfile} />
             </div>
           )}
+          <div className="mt-4">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+              Timbre (harmonic envelope)
+            </h3>
+            <TimbreVisualizer
+              harmonics={detector.harmonics}
+              currentPitchClass={detector.currentNote?.pitchClass ?? null}
+              polyphonicEnabled={detector.config.polyphonic}
+            />
+          </div>
         </div>
       </section>
 
@@ -259,6 +297,14 @@ export default function Home() {
           </p>
         </div>
         <Timeline notes={detector.notes} />
+      </section>
+
+      <section className="mb-6">
+        <ProgressionEditor
+          progression={progression}
+          onChange={setProgression}
+          currentChord={currentChord?.chord ?? null}
+        />
       </section>
 
       <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
@@ -282,6 +328,10 @@ export default function Home() {
           scalePitchClasses={scaleSet}
           rootPitchClass={selected?.root ?? null}
           currentPitchClass={detector.currentNote?.pitchClass ?? null}
+          chordPitchClasses={chordInfo?.all}
+          chordRootPitchClass={chordInfo?.root ?? null}
+          chordThirdPitchClass={chordInfo?.third ?? null}
+          chordFifthPitchClass={chordInfo?.fifth ?? null}
           boxCenterFret={boxOn ? boxCenterFret : null}
           boxWindow={boxWindow}
           onFretClick={handleFretClick}
