@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 type Props = {
   audioBuffer: AudioBuffer;
+  onTimeUpdate?: (seconds: number) => void;
 };
 
 const CANVAS_H = 64;
@@ -40,7 +41,7 @@ function drawWaveform(canvas: HTMLCanvasElement, buffer: AudioBuffer) {
   ctx.stroke();
 }
 
-export function WaveformPlayer({ audioBuffer }: Props) {
+export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sourceRef = useRef<AudioBufferSourceNode | null>(null);
   const ctxRef = useRef<AudioContext | null>(null);
@@ -79,7 +80,8 @@ export function WaveformPlayer({ audioBuffer }: Props) {
     startOffsetRef.current = 0;
     setPlaying(false);
     setProgress(0);
-  }, [stopSource]);
+    onTimeUpdate?.(0);
+  }, [stopSource, onTimeUpdate]);
 
   const handlePlay = useCallback(() => {
     if (playing) {
@@ -110,6 +112,7 @@ export function WaveformPlayer({ audioBuffer }: Props) {
         setProgress(0);
         sourceRef.current = null;
         cancelAnimationFrame(rafRef.current);
+        onTimeUpdate?.(0);
       }
     };
     sourceRef.current = src;
@@ -119,10 +122,11 @@ export function WaveformPlayer({ audioBuffer }: Props) {
     const tick = () => {
       const elapsed = (performance.now() - startAtRef.current) / 1000;
       setProgress(Math.min(elapsed / duration, 1));
+      onTimeUpdate?.(Math.min(elapsed, duration));
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
-  }, [audioBuffer, duration, playing, stopSource]);
+  }, [audioBuffer, duration, playing, stopSource, onTimeUpdate]);
 
   // Click on waveform to seek
   const handleSeek = useCallback(
@@ -132,6 +136,7 @@ export function WaveformPlayer({ audioBuffer }: Props) {
       const rect = canvas.getBoundingClientRect();
       const fraction = (e.clientX - rect.left) / rect.width;
       startOffsetRef.current = fraction * duration;
+      onTimeUpdate?.(fraction * duration);
       if (playing) {
         stopSource();
         setPlaying(false);
@@ -141,7 +146,7 @@ export function WaveformPlayer({ audioBuffer }: Props) {
         setProgress(fraction);
       }
     },
-    [duration, handlePlay, playing, stopSource]
+    [duration, handlePlay, playing, stopSource, onTimeUpdate]
   );
 
   useEffect(() => {
