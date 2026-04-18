@@ -5,6 +5,7 @@ import { PitchDetector } from "pitchy";
 import { DEFAULT_A4_HZ, freqToMidi, midiToNoteName, midiToPitchClass } from "../music/notes";
 import { computeChroma } from "./chroma";
 import { radix2FFT } from "./fft";
+import { octaveCorrect } from "./octaveCorrect";
 
 export type DetectedNote = {
   midi: number;
@@ -12,7 +13,7 @@ export type DetectedNote = {
   pitchClass: number;
   frequency: number;
   clarity: number;
-  at: number; // start time, ms (performance.now() for live, buffer-offset for offline)
+  at: number;
   durationMs: number;
   endAt: number;
 };
@@ -46,6 +47,32 @@ export const DEFAULT_CONFIG: PitchDetectorConfig = {
 const FRAME_SIZE = 2048;
 const HOP_SIZE = 1024;
 
+// Frames needed to calibrate the adaptive noise gate (~1 s at 44.1 kHz / 1024 hop)
+const CALIB_FRAMES = 43;
+// Multiplier over baseline RMS to use as the onset gate
+const CALIB_MULTIPLIER = 3;
+// When a note is active, require RMS to fall below this fraction of minRms before releasing
+const HYSTERESIS_RATIO = 0.5;
+// Spectral-flux onset: accept a note after 1 frame when band-flux exceeds this
+const ONSET_FLUX_THRESHOLD = 0.015;
+
+/** Bandwise RMS flux: compares 4 equal sub-bands between current and previous frame. */
+function computeFlux(frame: Float32Array, prev: Float32Array): number {
+  const band = frame.length >> 2;
+  let flux = 0;
+  for (let b = 0; b < 4; b++) {
+    const off = b * band;
+    let e = 0, ep = 0;
+    for (let i = 0; i < band; i++) {
+      e += frame[off + i] * frame[off + i];
+      ep += prev[off + i] * prev[off + i];
+    }
+    const diff = Math.sqrt(e / band) - Math.sqrt(ep / band);
+    if (diff > 0) flux += diff;
+  }
+  return flux;
+}
+
 export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
   const [config, setConfigState] = useState<PitchDetectorConfig>({
     ...DEFAULT_CONFIG,
@@ -61,31 +88,37 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const highPassRef = useRef<BiquadFilterNode | null>(null);
   const workletRef = useRef<AudioWorkletNode | null>(null);
+  // Fallback path when AudioWorklet is unavailable
+  const analyserFallbackRef = useRef<AnalyserNode | null>(null);
+  const fallbackIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sinkRef = useRef<GainNode | null>(null);
   const detectorRef = useRef<PitchDetector<Float32Array<ArrayBuffer>> | null>(null);
 
-  // Scratch buffers for the optional FFT / chroma path
   const fftReRef = useRef<Float32Array | null>(null);
   const fftImRef = useRef<Float32Array | null>(null);
   const freqDbRef = useRef<Float32Array | null>(null);
 
-  // Live-mutable config mirror so config changes take effect without a graph rebuild.
   const cfgRef = useRef<PitchDetectorConfig>(config);
   cfgRef.current = config;
 
-  // Active note state machine (for duration tracking).
   const activeMidiRef = useRef<number | null>(null);
   const activeStartRef = useRef<number>(0);
   const activeEndRef = useRef<number>(0);
   const activeFreqRef = useRef<number>(0);
   const activeClarityRef = useRef<number>(0);
 
-  // Candidate-note building (debouncer).
   const candidateMidiRef = useRef<number | null>(null);
   const candidateCountRef = useRef(0);
   const silenceFramesRef = useRef(0);
 
-  // Rolling chroma accumulator (polyphonic contribution).
+  // Spectral-flux onset detection
+  const prevFrameRef = useRef<Float32Array | null>(null);
+
+  // Adaptive noise gate calibration
+  const calibCountRef = useRef(0);
+  const calibRmsAccumRef = useRef(0);
+  const adaptiveMinRmsRef = useRef<number | null>(null); // null = not yet calibrated
+
   const chromaAccumRef = useRef<number[]>(Array(12).fill(0));
   const chromaDirtyRef = useRef(false);
   const chromaFlushAtRef = useRef(0);
@@ -130,20 +163,52 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
       if (!ctx || !detector) return;
       const now = performance.now();
 
+      // RMS
       let sumSq = 0;
       for (let i = 0; i < frame.length; i++) sumSq += frame[i] * frame[i];
       const rms = Math.sqrt(sumSq / frame.length);
 
-      // Throttle the level state update to ~15 Hz.
+      // Adaptive noise gate calibration (first CALIB_FRAMES frames)
+      if (calibCountRef.current < CALIB_FRAMES) {
+        calibCountRef.current += 1;
+        calibRmsAccumRef.current += rms;
+        if (calibCountRef.current === CALIB_FRAMES) {
+          const baseline = calibRmsAccumRef.current / CALIB_FRAMES;
+          adaptiveMinRmsRef.current = Math.max(cfg.minRms, baseline * CALIB_MULTIPLIER);
+        }
+      }
+      const effectiveMinRms = adaptiveMinRmsRef.current ?? cfg.minRms;
+
+      // Release hysteresis: lower threshold while a note is active
+      const releaseThreshold = activeMidiRef.current != null
+        ? effectiveMinRms * HYSTERESIS_RATIO
+        : effectiveMinRms;
+
       if (now - levelFlushAtRef.current > 66) {
         levelFlushAtRef.current = now;
         setLevel(rms);
       }
 
-      const [freq, clarity] = detector.findPitch(frame, ctx.sampleRate);
+      // Spectral flux onset detection
+      let onsetDetected = false;
+      if (prevFrameRef.current) {
+        onsetDetected = computeFlux(frame, prevFrameRef.current) > ONSET_FLUX_THRESHOLD;
+      }
+      if (!prevFrameRef.current || prevFrameRef.current.length !== frame.length) {
+        prevFrameRef.current = new Float32Array(frame.length);
+      }
+      prevFrameRef.current.set(frame);
+
+      const [rawFreq, clarity] = detector.findPitch(frame, ctx.sampleRate);
+
+      // Octave-error correction on low notes
+      const freq = octaveCorrect(frame, rawFreq, ctx.sampleRate, cfg.minFreq);
+
+      // Onset bypasses multi-frame confirmation (1-frame accept)
+      const confirmThreshold = onsetDetected ? 1 : cfg.framesToConfirm;
 
       const passes =
-        rms >= cfg.minRms &&
+        rms >= (activeMidiRef.current != null ? releaseThreshold : effectiveMinRms) &&
         clarity >= cfg.minClarity &&
         freq >= cfg.minFreq &&
         freq <= cfg.maxFreq;
@@ -159,7 +224,7 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
           candidateCountRef.current = 1;
         }
 
-        if (candidateCountRef.current >= cfg.framesToConfirm) {
+        if (candidateCountRef.current >= confirmThreshold) {
           if (activeMidiRef.current === midi) {
             activeEndRef.current = now;
             activeFreqRef.current = freq;
@@ -184,7 +249,10 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
           }
         }
       } else {
-        silenceFramesRef.current += 1;
+        // Only count silence frames when RMS drops below release threshold
+        if (rms < releaseThreshold || !passes) {
+          silenceFramesRef.current += 1;
+        }
         if (
           silenceFramesRef.current >= cfg.silenceFramesToRelease &&
           activeMidiRef.current != null
@@ -195,7 +263,7 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
         }
       }
 
-      if (cfg.polyphonic && rms >= cfg.minRms) {
+      if (cfg.polyphonic && rms >= effectiveMinRms) {
         const fre = fftReRef.current!;
         const fim = fftImRef.current!;
         const fdb = freqDbRef.current!;
@@ -226,6 +294,43 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
     [finalizeActive]
   );
 
+  const initSharedNodes = (ctx: AudioContext, stream: MediaStream) => {
+    const source = ctx.createMediaStreamSource(stream);
+    const hp = ctx.createBiquadFilter();
+    hp.type = "highpass";
+    hp.frequency.value = cfgRef.current.highPass ? cfgRef.current.highPassHz : 20;
+    hp.Q.value = 0.707;
+    const sink = ctx.createGain();
+    sink.gain.value = 0;
+
+    audioContextRef.current = ctx;
+    sourceRef.current = source;
+    highPassRef.current = hp;
+    sinkRef.current = sink;
+
+    detectorRef.current = PitchDetector.forFloat32Array(FRAME_SIZE);
+    fftReRef.current = new Float32Array(FRAME_SIZE);
+    fftImRef.current = new Float32Array(FRAME_SIZE);
+    freqDbRef.current = new Float32Array(FRAME_SIZE / 2);
+
+    return { source, hp, sink };
+  };
+
+  const resetLiveState = () => {
+    activeMidiRef.current = null;
+    candidateMidiRef.current = null;
+    candidateCountRef.current = 0;
+    silenceFramesRef.current = 0;
+    prevFrameRef.current = null;
+    calibCountRef.current = 0;
+    calibRmsAccumRef.current = 0;
+    adaptiveMinRmsRef.current = null;
+    chromaAccumRef.current = Array(12).fill(0);
+    chromaDirtyRef.current = false;
+    chromaFlushAtRef.current = performance.now();
+    levelFlushAtRef.current = 0;
+  };
+
   const start = useCallback(
     async (stream: MediaStream) => {
       if (active) return;
@@ -234,62 +339,48 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       const ctx = new AudioCtx({ latencyHint: "interactive" });
 
-      // Worklet module load (idempotent per context).
+      let useWorklet = true;
       try {
         await ctx.audioWorklet.addModule("/worklets/frame-producer.js");
-      } catch (e) {
-        ctx.close().catch(() => {});
-        throw new Error(
-          `AudioWorklet not available: ${e instanceof Error ? e.message : String(e)}`
-        );
+      } catch {
+        useWorklet = false;
       }
 
-      const source = ctx.createMediaStreamSource(stream);
-      const hp = ctx.createBiquadFilter();
-      hp.type = "highpass";
-      hp.frequency.value = cfgRef.current.highPass ? cfgRef.current.highPassHz : 20;
-      hp.Q.value = 0.707;
+      const { source, hp, sink } = initSharedNodes(ctx, stream);
+      resetLiveState();
 
-      const worklet = new AudioWorkletNode(ctx, "frame-producer", {
-        processorOptions: { frameSize: FRAME_SIZE, hopSize: HOP_SIZE },
-      });
-      // A zero-gain sink keeps the worklet scheduled without routing mic audio
-      // back to the speakers.
-      const sink = ctx.createGain();
-      sink.gain.value = 0;
+      if (useWorklet) {
+        const worklet = new AudioWorkletNode(ctx, "frame-producer", {
+          processorOptions: { frameSize: FRAME_SIZE, hopSize: HOP_SIZE },
+        });
+        source.connect(hp);
+        hp.connect(worklet);
+        worklet.connect(sink);
+        sink.connect(ctx.destination);
+        workletRef.current = worklet;
 
-      source.connect(hp);
-      hp.connect(worklet);
-      worklet.connect(sink);
-      sink.connect(ctx.destination);
+        worklet.port.onmessage = (ev: MessageEvent<{ frame: Float32Array }>) => {
+          const raw = ev.data?.frame;
+          if (!raw) return;
+          processFrame(raw as Float32Array<ArrayBuffer>);
+        };
+      } else {
+        // Fallback: AnalyserNode polled via setInterval
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = FRAME_SIZE;
+        analyser.smoothingTimeConstant = 0;
+        source.connect(hp);
+        hp.connect(analyser);
+        hp.connect(sink);
+        sink.connect(ctx.destination);
+        analyserFallbackRef.current = analyser;
 
-      const detector = PitchDetector.forFloat32Array(FRAME_SIZE);
-      detectorRef.current = detector;
-      fftReRef.current = new Float32Array(FRAME_SIZE);
-      fftImRef.current = new Float32Array(FRAME_SIZE);
-      freqDbRef.current = new Float32Array(FRAME_SIZE / 2);
-
-      audioContextRef.current = ctx;
-      sourceRef.current = source;
-      highPassRef.current = hp;
-      workletRef.current = worklet;
-      sinkRef.current = sink;
-
-      activeMidiRef.current = null;
-      candidateMidiRef.current = null;
-      candidateCountRef.current = 0;
-      silenceFramesRef.current = 0;
-      chromaAccumRef.current = Array(12).fill(0);
-      chromaDirtyRef.current = false;
-      chromaFlushAtRef.current = performance.now();
-      levelFlushAtRef.current = 0;
-
-      worklet.port.onmessage = (ev: MessageEvent<{ frame: Float32Array }>) => {
-        const raw = ev.data?.frame;
-        if (!raw) return;
-        // Guarantee a fresh ArrayBuffer-backed view for pitchy's typing.
-        processFrame(raw as Float32Array<ArrayBuffer>);
-      };
+        const fallbackFrame = new Float32Array(FRAME_SIZE);
+        fallbackIntervalRef.current = setInterval(() => {
+          analyser.getFloatTimeDomainData(fallbackFrame);
+          processFrame(fallbackFrame as Float32Array<ArrayBuffer>);
+        }, 20);
+      }
 
       setActive(true);
     },
@@ -299,26 +390,30 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
   const stop = useCallback(() => {
     if (activeMidiRef.current != null) finalizeActive(performance.now());
 
+    if (fallbackIntervalRef.current != null) {
+      clearInterval(fallbackIntervalRef.current);
+      fallbackIntervalRef.current = null;
+    }
+
     const worklet = workletRef.current;
     if (worklet) {
       worklet.port.onmessage = null;
-      try {
-        worklet.disconnect();
-      } catch {}
+      try { worklet.disconnect(); } catch {}
       workletRef.current = null;
     }
+
     const tearDown = (ref: React.MutableRefObject<AudioNode | null>) => {
       const node = ref.current;
       if (node) {
-        try {
-          node.disconnect();
-        } catch {}
+        try { node.disconnect(); } catch {}
         ref.current = null;
       }
     };
+    tearDown(analyserFallbackRef as React.MutableRefObject<AudioNode | null>);
     tearDown(sourceRef as React.MutableRefObject<AudioNode | null>);
     tearDown(highPassRef as React.MutableRefObject<AudioNode | null>);
     tearDown(sinkRef as React.MutableRefObject<AudioNode | null>);
+
     if (audioContextRef.current) {
       audioContextRef.current.close().catch(() => {});
       audioContextRef.current = null;
@@ -327,6 +422,8 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
     fftReRef.current = null;
     fftImRef.current = null;
     freqDbRef.current = null;
+    prevFrameRef.current = null;
+    adaptiveMinRmsRef.current = null;
     candidateMidiRef.current = null;
     candidateCountRef.current = 0;
     silenceFramesRef.current = 0;
@@ -344,6 +441,11 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
     chromaDirtyRef.current = false;
     candidateMidiRef.current = null;
     candidateCountRef.current = 0;
+    // Reset adaptive gate so it re-calibrates on next session
+    calibCountRef.current = 0;
+    calibRmsAccumRef.current = 0;
+    adaptiveMinRmsRef.current = null;
+    prevFrameRef.current = null;
   }, []);
 
   const addNotes = useCallback((more: DetectedNote[]) => {
@@ -358,9 +460,14 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
     });
   }, []);
 
+  const deleteNote = useCallback((index: number) => {
+    setNotes((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
   useEffect(() => {
     return () => {
       if (audioContextRef.current) audioContextRef.current.close().catch(() => {});
+      if (fallbackIntervalRef.current != null) clearInterval(fallbackIntervalRef.current);
     };
   }, []);
 
@@ -371,6 +478,7 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
     reset,
     addNotes,
     addChroma,
+    deleteNote,
     currentNote,
     level,
     notes,

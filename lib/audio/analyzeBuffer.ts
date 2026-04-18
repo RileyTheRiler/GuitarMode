@@ -3,6 +3,7 @@
 import { PitchDetector } from "pitchy";
 import { DEFAULT_A4_HZ, freqToMidi, midiToNoteName, midiToPitchClass } from "../music/notes";
 import type { DetectedNote } from "./usePitchDetector";
+import { octaveCorrect } from "./octaveCorrect";
 
 export type AnalyzeOptions = {
   minFreq?: number;
@@ -32,7 +33,7 @@ const DEFAULTS: Required<AnalyzeOptions> = {
 
 export type AnalyzeResult = {
   notes: DetectedNote[];
-  chroma: number[]; // accumulated 12-bin pitch-class energy from chroma mode
+  chroma: number[];
   durationMs: number;
 };
 
@@ -50,8 +51,6 @@ function mixToMono(buffer: AudioBuffer): Float32Array {
   return out;
 }
 
-// Simple 2nd-order high-pass (matching BiquadFilterNode's default Q=0.707)
-// to mirror the live-input chain during offline analysis.
 function highPassInPlace(data: Float32Array, sampleRate: number, cutoffHz: number) {
   const rc = 1 / (2 * Math.PI * cutoffHz);
   const dt = 1 / sampleRate;
@@ -67,10 +66,32 @@ function highPassInPlace(data: Float32Array, sampleRate: number, cutoffHz: numbe
   }
 }
 
+/** Bandwise RMS flux across 4 sub-bands (same formula as the live path). */
+function computeFlux(frame: Float32Array, prev: Float32Array): number {
+  const band = frame.length >> 2;
+  let flux = 0;
+  for (let b = 0; b < 4; b++) {
+    const off = b * band;
+    let e = 0, ep = 0;
+    for (let i = 0; i < band; i++) {
+      e += frame[off + i] * frame[off + i];
+      ep += prev[off + i] * prev[off + i];
+    }
+    const diff = Math.sqrt(e / band) - Math.sqrt(ep / band);
+    if (diff > 0) flux += diff;
+  }
+  return flux;
+}
+
+const CALIB_FRAMES = 43;
+const CALIB_MULTIPLIER = 3;
+const HYSTERESIS_RATIO = 0.5;
+const ONSET_FLUX_THRESHOLD = 0.015;
+
 /**
  * Offline analysis of an AudioBuffer. Mirrors the live detector's state
- * machine (3-frame confirmation + duration tracking on release) and
- * optionally accumulates a chromagram for polyphonic input.
+ * machine: adaptive noise gate, octave correction, spectral-flux onset
+ * detection, confirmation + duration tracking on release, optional chroma.
  */
 export async function analyzeAudioBuffer(
   buffer: AudioBuffer,
@@ -86,8 +107,8 @@ export async function analyzeAudioBuffer(
   const frame = new Float32Array(
     new ArrayBuffer(cfg.frameSize * Float32Array.BYTES_PER_ELEMENT)
   );
+  let prevFrame: Float32Array | null = null;
 
-  // Only used when polyphonic=true (lazy to keep bundle size for mono users).
   let chromaLib: typeof import("./chroma") | null = null;
   let fftHelpers: { fft: (re: Float32Array, im: Float32Array) => void } | null = null;
   let fftRe: Float32Array | null = null;
@@ -102,6 +123,11 @@ export async function analyzeAudioBuffer(
     freqDb = new Float32Array(cfg.frameSize / 2);
   }
   const chromaAccum: number[] = Array(12).fill(0);
+
+  // Adaptive gate calibration state
+  let calibCount = 0;
+  let calibRmsAccum = 0;
+  let adaptiveMinRms: number | null = null;
 
   let activeMidi: number | null = null;
   let activeStart = 0;
@@ -141,9 +167,34 @@ export async function analyzeAudioBuffer(
     for (let i = 0; i < frame.length; i++) sumSq += frame[i] * frame[i];
     const rms = Math.sqrt(sumSq / frame.length);
 
-    const [freq, clarity] = detector.findPitch(frame, sampleRate);
+    // Adaptive noise gate calibration
+    if (calibCount < CALIB_FRAMES) {
+      calibCount += 1;
+      calibRmsAccum += rms;
+      if (calibCount === CALIB_FRAMES) {
+        const baseline = calibRmsAccum / CALIB_FRAMES;
+        adaptiveMinRms = Math.max(cfg.minRms, baseline * CALIB_MULTIPLIER);
+      }
+    }
+    const effectiveMinRms = adaptiveMinRms ?? cfg.minRms;
+    const releaseThreshold = activeMidi != null ? effectiveMinRms * HYSTERESIS_RATIO : effectiveMinRms;
+
+    // Spectral flux onset detection
+    let onsetDetected = false;
+    if (prevFrame) {
+      onsetDetected = computeFlux(frame, prevFrame) > ONSET_FLUX_THRESHOLD;
+    }
+    if (!prevFrame) prevFrame = new Float32Array(cfg.frameSize);
+    prevFrame.set(frame);
+
+    const [rawFreq, clarity] = detector.findPitch(frame, sampleRate);
+    const freq = octaveCorrect(frame, rawFreq, sampleRate, cfg.minFreq);
+
+    const confirmThreshold = onsetDetected ? 1 : cfg.framesToConfirm;
+
+    const onsetMinRms = activeMidi != null ? releaseThreshold : effectiveMinRms;
     const passes =
-      rms >= cfg.minRms &&
+      rms >= onsetMinRms &&
       clarity >= cfg.minClarity &&
       freq >= cfg.minFreq &&
       freq <= cfg.maxFreq;
@@ -157,7 +208,7 @@ export async function analyzeAudioBuffer(
         candidateMidi = midi;
         candidateCount = 1;
       }
-      if (candidateCount >= cfg.framesToConfirm) {
+      if (candidateCount >= confirmThreshold) {
         if (activeMidi === midi) {
           activeEnd = frameAtMs;
           activeFreq = freq;
@@ -172,7 +223,7 @@ export async function analyzeAudioBuffer(
         }
       }
     } else {
-      silenceFrames += 1;
+      if (rms < releaseThreshold || !passes) silenceFrames += 1;
       if (silenceFrames >= cfg.silenceFramesToRelease && activeMidi != null) {
         finalize(frameAtMs);
         candidateMidi = null;
@@ -180,8 +231,7 @@ export async function analyzeAudioBuffer(
       }
     }
 
-    if (cfg.polyphonic && rms >= cfg.minRms && chromaLib && fftHelpers && fftRe && fftIm && freqDb) {
-      // Windowed FFT → dB spectrum → chroma
+    if (cfg.polyphonic && rms >= effectiveMinRms && chromaLib && fftHelpers && fftRe && fftIm && freqDb) {
       for (let i = 0; i < cfg.frameSize; i++) {
         const w = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (cfg.frameSize - 1));
         fftRe[i] = frame[i] * w;

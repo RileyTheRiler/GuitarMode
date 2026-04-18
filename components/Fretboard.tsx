@@ -8,12 +8,9 @@ type Props = {
   playedPitchClasses: Set<number>;
   scalePitchClasses?: Set<number>;
   rootPitchClass?: number | null;
-  // CAGED / box mode. When set, only frets within [center-window, center+window]
-  // (plus open strings) are rendered as note circles.
+  currentPitchClass?: number | null;
   boxCenterFret?: number | null;
   boxWindow?: number;
-  // Called when a fret position is clicked; the consumer decides whether to
-  // audition the note.
   onFretClick?: (stringIndex: number, fret: number, midi: number) => void;
 };
 
@@ -25,6 +22,7 @@ export function Fretboard({
   playedPitchClasses,
   scalePitchClasses,
   rootPitchClass,
+  currentPitchClass,
   boxCenterFret,
   boxWindow = 5,
   onFretClick,
@@ -52,7 +50,7 @@ export function Fretboard({
 
   const inBox = (fret: number) => {
     if (boxCenterFret == null) return true;
-    if (fret === 0) return true; // open strings always allowed
+    if (fret === 0) return true;
     return fret >= boxCenterFret - boxWindow && fret <= boxCenterFret + boxWindow;
   };
 
@@ -64,7 +62,8 @@ export function Fretboard({
       const isPlayed = playedPitchClasses.has(pos.pitchClass);
       const isInScale = scalePitchClasses?.has(pos.pitchClass) ?? false;
       const isRoot = rootPitchClass != null && pos.pitchClass === rootPitchClass;
-      const visible = inBox(f) && (isPlayed || isInScale);
+      const isLive = currentPitchClass != null && pos.pitchClass === currentPitchClass;
+      const visible = inBox(f) && (isPlayed || isInScale || isLive);
 
       const cx = fretX(f);
       const cy = stringY(s);
@@ -91,6 +90,23 @@ export function Fretboard({
 
       circles.push(
         <g key={`note-${s}-${f}`} pointerEvents="none">
+          {/* Pulsing ring for the live note */}
+          {isLive && (
+            <circle cx={cx} cy={cy} r={r + 5} fill="none" stroke={color} strokeWidth={2}>
+              <animate
+                attributeName="r"
+                values={`${r + 3};${r + 9};${r + 3}`}
+                dur="0.9s"
+                repeatCount="indefinite"
+              />
+              <animate
+                attributeName="opacity"
+                values="0.7;0;0.7"
+                dur="0.9s"
+                repeatCount="indefinite"
+              />
+            </circle>
+          )}
           {isPlayed ? (
             <circle
               cx={cx}
@@ -105,9 +121,10 @@ export function Fretboard({
               cx={cx}
               cy={cy}
               r={r}
-              fill="#0a0a0a"
+              fill={isLive ? color : "#0a0a0a"}
               stroke={color}
               strokeWidth={isRoot ? 3 : 2}
+              opacity={isLive ? 0.85 : 1}
             />
           )}
           <text
@@ -116,7 +133,7 @@ export function Fretboard({
             textAnchor="middle"
             fontSize={10}
             fontWeight={isRoot ? 700 : 500}
-            fill={isPlayed ? "#0a0a0a" : color}
+            fill={isPlayed || isLive ? "#0a0a0a" : color}
           >
             {pitchClassName(pos.pitchClass)}
           </text>
@@ -142,7 +159,6 @@ export function Fretboard({
           rx={4}
         />
 
-        {/* CAGED box highlight */}
         {boxCenterFret != null && (
           <rect
             x={fretLineX(Math.max(0, boxCenterFret - boxWindow))}
@@ -157,7 +173,6 @@ export function Fretboard({
           />
         )}
 
-        {/* Inlay markers */}
         {Array.from({ length: numFrets }, (_, idx) => idx + 1).map((f) => {
           const cx = leftPad + nutWidth + (f - 0.5) * fretWidth;
           if (DOUBLE_MARKERS.has(f)) {
@@ -183,7 +198,6 @@ export function Fretboard({
           return null;
         })}
 
-        {/* Frets */}
         {Array.from({ length: numFrets + 1 }, (_, f) => (
           <line
             key={`fret-${f}`}
@@ -196,7 +210,6 @@ export function Fretboard({
           />
         ))}
 
-        {/* Strings */}
         {Array.from({ length: numStrings }, (_, s) => (
           <line
             key={`string-${s}`}
@@ -209,7 +222,6 @@ export function Fretboard({
           />
         ))}
 
-        {/* Open-string labels */}
         {Array.from({ length: numStrings }, (_, s) => (
           <text
             key={`label-${s}`}
@@ -223,7 +235,6 @@ export function Fretboard({
           </text>
         ))}
 
-        {/* Fret numbers */}
         {Array.from({ length: numFrets }, (_, idx) => idx + 1).map((f) => (
           <text
             key={`fretnum-${f}`}
@@ -237,11 +248,7 @@ export function Fretboard({
           </text>
         ))}
 
-        {/* Hit targets (rendered beneath circles in DOM order so circles
-            don't steal the click). */}
         {hitTargets}
-
-        {/* Note circles */}
         {circles}
       </svg>
     </div>
