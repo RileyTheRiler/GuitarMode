@@ -77,7 +77,7 @@ export function ProgressionEditor({ progression, onChange, currentChord }: Props
   };
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+    <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <button
           type="button"
@@ -86,7 +86,7 @@ export function ProgressionEditor({ progression, onChange, currentChord }: Props
         >
           Chord progression {open ? "▾" : "▸"}
         </button>
-        <div className="flex items-center gap-3 text-xs">
+        <div className="flex flex-wrap items-center gap-2 text-xs sm:gap-3">
           {currentChord && (
             <span className="rounded bg-amber-500/15 px-2 py-1 font-medium text-amber-300">
               Now: {currentChord}

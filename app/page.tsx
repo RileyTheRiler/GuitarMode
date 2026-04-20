@@ -235,16 +235,16 @@ export default function Home() {
   const hasChroma = detector.chromaProfile.some((v) => v > 0);
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-8">
-      <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">GuitarMode</h1>
+    <main className="mx-auto max-w-6xl px-3 py-4 sm:px-4 sm:py-8">
+      <header className="mb-4 sm:mb-6">
+        <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">GuitarMode</h1>
         <p className="text-sm text-zinc-400">
           Play your guitar. I&rsquo;ll name the notes, guess the scale, and show you what&rsquo;s
           next on the fretboard.
         </p>
       </header>
 
-      <section className="mb-4 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+      <section className="mb-4 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:p-4">
         <MicControls
           micOn={detector.active}
           onToggleMic={handleToggleMic}
@@ -259,7 +259,7 @@ export default function Home() {
         />
       </section>
 
-      <section className="mb-6">
+      <section className="mb-4 sm:mb-6">
         <InputSettings
           config={detector.config}
           onChange={detector.setConfig}
@@ -270,8 +270,8 @@ export default function Home() {
         />
       </section>
 
-      <section className="mb-6 grid gap-6 lg:grid-cols-2">
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+      <section className="mb-4 grid gap-4 sm:mb-6 sm:gap-6 lg:grid-cols-2">
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:p-4">
           <div className="mb-3 flex items-center justify-between gap-2">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
               Detected notes
@@ -294,7 +294,7 @@ export default function Home() {
             />
           )}
         </div>
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:p-4">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
             Scale &amp; mode suggestions
           </h2>
@@ -322,7 +322,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="mb-6 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+      <section className="mb-4 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:mb-6 sm:p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
             Timeline
@@ -334,7 +334,7 @@ export default function Home() {
         <Timeline notes={detector.notes} />
       </section>
 
-      <section className="mb-6">
+      <section className="mb-4 sm:mb-6">
         <ProgressionEditor
           progression={progression}
           onChange={setProgression}
@@ -342,7 +342,7 @@ export default function Home() {
         />
       </section>
 
-      <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+      <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
             Fretboard

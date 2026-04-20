@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { colorForPitchClass, pitchClassName } from "@/lib/music/notes";
 import { STANDARD_TUNING, STRING_LABELS, getNoteAt } from "@/lib/guitar/fretboard";
 
@@ -21,6 +22,21 @@ type Props = {
 const DOUBLE_MARKERS = new Set([12, 24]);
 const SINGLE_MARKERS = new Set([3, 5, 7, 9, 15, 17, 19, 21]);
 
+// Tailwind sm breakpoint = 640px. Below that, switch to compact sizing so the
+// full fretboard is readable on phones instead of requiring heavy scrolling.
+function useCompactFretboard() {
+  const [compact, setCompact] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(max-width: 639px)");
+    const update = () => setCompact(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+  return compact;
+}
+
 export function Fretboard({
   numFrets = 22,
   playedPitchClasses,
@@ -37,13 +53,18 @@ export function Fretboard({
 }: Props) {
   const chordActive = !!chordPitchClasses && chordPitchClasses.size > 0;
   const numStrings = STANDARD_TUNING.length;
-  const nutWidth = 10;
-  const leftPad = 44;
-  const rightPad = 16;
-  const topPad = 24;
-  const bottomPad = 24;
-  const fretWidth = 52;
-  const stringSpacing = 30;
+  const compact = useCompactFretboard();
+  const nutWidth = compact ? 8 : 10;
+  const leftPad = compact ? 30 : 44;
+  const rightPad = compact ? 10 : 16;
+  const topPad = compact ? 18 : 24;
+  const bottomPad = compact ? 18 : 24;
+  const fretWidth = compact ? 34 : 52;
+  const stringSpacing = compact ? 22 : 30;
+  const noteRadius = compact ? 9 : 11;
+  const noteFontSize = compact ? 9 : 10;
+  const stringLabelFontSize = compact ? 10 : 12;
+  const fretNumFontSize = compact ? 9 : 10;
 
   const boardWidth = numFrets * fretWidth;
   const width = leftPad + nutWidth + boardWidth + rightPad;
@@ -104,8 +125,8 @@ export function Fretboard({
       if (!visible) continue;
 
       const color = colorForPitchClass(pos.pitchClass);
-      const baseR = 11;
-      const r = isChordTone ? 12 : baseR;
+      const baseR = noteRadius;
+      const r = isChordTone ? baseR + 1 : baseR;
       // Dim scale-only tones when a chord is active; chord tones stay bright.
       let groupOpacity = 1;
       if (chordActive && !isChordTone && !isLive) {
@@ -163,7 +184,7 @@ export function Fretboard({
             x={cx}
             y={cy + 3.5}
             textAnchor="middle"
-            fontSize={10}
+            fontSize={noteFontSize}
             fontWeight={isChordRoot || isRoot ? 700 : 500}
             fill={isPlayed || isLive || isChordTone ? "#0a0a0a" : color}
           >
@@ -257,9 +278,9 @@ export function Fretboard({
         {Array.from({ length: numStrings }, (_, s) => (
           <text
             key={`label-${s}`}
-            x={leftPad - 22}
+            x={leftPad - (compact ? 14 : 22)}
             y={stringY(s) + 4}
-            fontSize={12}
+            fontSize={stringLabelFontSize}
             fill="#e5e5e5"
             textAnchor="middle"
           >
@@ -271,8 +292,8 @@ export function Fretboard({
           <text
             key={`fretnum-${f}`}
             x={leftPad + nutWidth + (f - 0.5) * fretWidth}
-            y={topPad + boardHeight + 18}
-            fontSize={10}
+            y={topPad + boardHeight + (compact ? 14 : 18)}
+            fontSize={fretNumFontSize}
             fill="#a1a1aa"
             textAnchor="middle"
           >
