@@ -223,7 +223,7 @@ export async function analyzeAudioBuffer(
         }
       }
     } else {
-      if (rms < releaseThreshold || !passes) silenceFrames += 1;
+      if (rms < releaseThreshold) silenceFrames += 1;
       if (silenceFrames >= cfg.silenceFramesToRelease && activeMidi != null) {
         finalize(frameAtMs);
         candidateMidi = null;
