@@ -58,6 +58,9 @@ const CALIB_FRAMES = 43;
 const CALIB_MULTIPLIER = 3;
 // When a note is active, require RMS to fall below this fraction of minRms before releasing
 const HYSTERESIS_RATIO = 0.5;
+// While a note is active, accept lower clarity to avoid truncating sustained
+// notes whose YIN clarity momentarily dips (vibrato, string noise, bow noise).
+const CLARITY_HYSTERESIS_RATIO = 0.85;
 // Spectral-flux onset: accept a note after 1 frame when band-flux exceeds this
 const ONSET_FLUX_THRESHOLD = 0.015;
 
@@ -249,9 +252,11 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
       // Onset bypasses multi-frame confirmation (1-frame accept)
       const confirmThreshold = onsetDetected ? 1 : cfg.framesToConfirm;
 
+      const clarityThreshold =
+        activeMidiRef.current != null ? cfg.minClarity * CLARITY_HYSTERESIS_RATIO : cfg.minClarity;
       const passes =
         rms >= (activeMidiRef.current != null ? releaseThreshold : effectiveMinRms) &&
-        clarity >= cfg.minClarity &&
+        clarity >= clarityThreshold &&
         freq >= cfg.minFreq &&
         freq <= cfg.maxFreq;
 

@@ -90,6 +90,7 @@ function computeFlux(frame: Float32Array, prev: Float32Array): number {
 const CALIB_FRAMES = 43;
 const CALIB_MULTIPLIER = 3;
 const HYSTERESIS_RATIO = 0.5;
+const CLARITY_HYSTERESIS_RATIO = 0.85;
 const ONSET_FLUX_THRESHOLD = 0.015;
 
 /**
@@ -203,9 +204,11 @@ export async function analyzeAudioBuffer(
     const confirmThreshold = onsetDetected ? 1 : cfg.framesToConfirm;
 
     const onsetMinRms = activeMidi != null ? releaseThreshold : effectiveMinRms;
+    const clarityThreshold =
+      activeMidi != null ? cfg.minClarity * CLARITY_HYSTERESIS_RATIO : cfg.minClarity;
     const passes =
       rms >= onsetMinRms &&
-      clarity >= cfg.minClarity &&
+      clarity >= clarityThreshold &&
       freq >= cfg.minFreq &&
       freq <= cfg.maxFreq;
 
