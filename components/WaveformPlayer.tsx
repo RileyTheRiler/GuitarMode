@@ -84,7 +84,7 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
   }, [stopSource, onTimeUpdate]);
 
   const handlePlay = useCallback(() => {
-    if (playing) {
+    if (sourceRef.current) {
       // pause
       const elapsed = (performance.now() - startAtRef.current) / 1000;
       startOffsetRef.current = Math.min(startOffsetRef.current + elapsed, duration);
@@ -126,7 +126,7 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
-  }, [audioBuffer, duration, playing, stopSource, onTimeUpdate]);
+  }, [audioBuffer, duration, stopSource, onTimeUpdate]);
 
   // Click on waveform to seek
   const handleSeek = useCallback(
