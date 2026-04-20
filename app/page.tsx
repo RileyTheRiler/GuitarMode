@@ -11,6 +11,7 @@ import { Timeline } from "@/components/Timeline";
 import { ChromaChart } from "@/components/ChromaChart";
 import { WaveformPlayer } from "@/components/WaveformPlayer";
 import { ProgressionEditor } from "@/components/ProgressionEditor";
+import { Metronome } from "@/components/Metronome";
 import { TimbreVisualizer } from "@/components/TimbreVisualizer";
 import { useMicStream } from "@/lib/audio/useMicStream";
 import { usePitchDetector, type DetectedNote } from "@/lib/audio/usePitchDetector";
@@ -332,6 +333,10 @@ export default function Home() {
           </p>
         </div>
         <Timeline notes={detector.notes} />
+      </section>
+
+      <section className="mb-4 sm:mb-6">
+        <Metronome />
       </section>
 
       <section className="mb-4 sm:mb-6">

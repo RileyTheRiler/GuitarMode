@@ -13,6 +13,37 @@ function getContext(): AudioContext {
   return sharedCtx;
 }
 
+/** Shared AudioContext used for UI-triggered sounds (pluck preview, metronome). */
+export function getToneContext(): AudioContext {
+  return getContext();
+}
+
+/**
+ * Schedule a short metronome click at an exact audio-clock time. Using the
+ * audio clock (not setTimeout) keeps timing sample-accurate even under GC
+ * pauses. Accented beats are higher and a touch louder.
+ */
+export function scheduleClick(time: number, accent = false) {
+  const ctx = getContext();
+  if (ctx.state === "suspended") ctx.resume().catch(() => {});
+
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+
+  osc.type = "square";
+  osc.frequency.value = accent ? 1600 : 900;
+
+  const peak = accent ? 0.35 : 0.2;
+  gain.gain.setValueAtTime(0, time);
+  gain.gain.linearRampToValueAtTime(peak, time + 0.002);
+  gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.05);
+
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(time);
+  osc.stop(time + 0.08);
+}
+
 /**
  * Play a short, guitar-ish pluck at the given MIDI pitch. Uses a pair of
  * slightly-detuned triangle oscillators through an exponential envelope.
