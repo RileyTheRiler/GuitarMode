@@ -120,9 +120,10 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
   // Spectral-flux onset detection
   const prevFrameRef = useRef<Float32Array | null>(null);
 
-  // Adaptive noise gate calibration
-  const calibCountRef = useRef(0);
-  const calibRmsAccumRef = useRef(0);
+  // Adaptive noise gate calibration. We collect per-frame RMS and take the
+  // 25th percentile as the baseline — resilient to a user playing during
+  // calibration, which would otherwise inflate the gate and mask quiet notes.
+  const calibSamplesRef = useRef<number[]>([]);
   const adaptiveMinRmsRef = useRef<number | null>(null); // null = not yet calibrated
 
   const chromaAccumRef = useRef<number[]>(Array(12).fill(0));
@@ -176,7 +177,10 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
     const midi = activeMidiRef.current;
     if (midi == null) return;
     const start = activeStartRef.current;
-    const end = Math.max(endTime, activeEndRef.current);
+    // Use the last frame where audio was present, not the release time — the
+    // release is delayed by silenceFramesToRelease (~230ms) of post-decay silence
+    // and would otherwise inflate every note's duration.
+    const end = activeEndRef.current > 0 ? activeEndRef.current : endTime;
     const note: DetectedNote = {
       midi,
       noteName: midiToNoteName(midi),
@@ -206,11 +210,12 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
       const rms = Math.sqrt(sumSq / frame.length);
 
       // Adaptive noise gate calibration (first CALIB_FRAMES frames)
-      if (calibCountRef.current < CALIB_FRAMES) {
-        calibCountRef.current += 1;
-        calibRmsAccumRef.current += rms;
-        if (calibCountRef.current === CALIB_FRAMES) {
-          const baseline = calibRmsAccumRef.current / CALIB_FRAMES;
+      if (calibSamplesRef.current.length < CALIB_FRAMES) {
+        calibSamplesRef.current.push(rms);
+        if (calibSamplesRef.current.length === CALIB_FRAMES) {
+          const sorted = calibSamplesRef.current.slice().sort((a, b) => a - b);
+          const pIdx = Math.floor(sorted.length * 0.25);
+          const baseline = sorted[pIdx];
           adaptiveMinRmsRef.current = Math.max(cfg.minRms, baseline * CALIB_MULTIPLIER);
         }
       }
@@ -371,8 +376,7 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
     candidateCountRef.current = 0;
     silenceFramesRef.current = 0;
     prevFrameRef.current = null;
-    calibCountRef.current = 0;
-    calibRmsAccumRef.current = 0;
+    calibSamplesRef.current = [];
     adaptiveMinRmsRef.current = null;
     chromaAccumRef.current = Array(12).fill(0);
     chromaDirtyRef.current = false;
@@ -496,8 +500,7 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
     candidateMidiRef.current = null;
     candidateCountRef.current = 0;
     // Reset adaptive gate so it re-calibrates on next session
-    calibCountRef.current = 0;
-    calibRmsAccumRef.current = 0;
+    calibSamplesRef.current = [];
     adaptiveMinRmsRef.current = null;
     prevFrameRef.current = null;
   }, []);

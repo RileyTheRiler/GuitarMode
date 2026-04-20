@@ -148,6 +148,8 @@ export default function Home() {
           polyphonic: detector.config.polyphonic,
           minClarity: detector.config.minClarity,
           minRms: detector.config.minRms,
+          highPass: detector.config.highPass,
+          highPassHz: detector.config.highPassHz,
         });
         if (!mountedRef.current) return;
         detector.reset();
@@ -176,6 +178,8 @@ export default function Home() {
       polyphonic: detector.config.polyphonic,
       minClarity: detector.config.minClarity,
       minRms: detector.config.minRms,
+      highPass: detector.config.highPass,
+      highPassHz: detector.config.highPassHz,
     };
     try {
       const stream = mic.streamRef.current ?? (await mic.start(mic.currentDeviceId));
