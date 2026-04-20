@@ -72,7 +72,7 @@ export function Fretboard({
       const isInScale = scalePitchClasses?.has(pos.pitchClass) ?? false;
       const isRoot = rootPitchClass != null && pos.pitchClass === rootPitchClass;
       const isLive = currentPitchClass != null && pos.pitchClass === currentPitchClass;
-      const isChordTone = chordActive && chordPitchClasses!.has(pos.pitchClass);
+      const isChordTone = chordActive && (chordPitchClasses?.has(pos.pitchClass) ?? false);
       const isChordRoot =
         chordActive && chordRootPitchClass != null && pos.pitchClass === chordRootPitchClass;
       const isChordThird =

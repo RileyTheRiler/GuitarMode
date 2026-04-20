@@ -35,8 +35,13 @@ export function useMicStream() {
   const start = useCallback(
     async (deviceId?: string | null) => {
       if (streamRef.current) {
-        // If device changed, restart the stream.
-        if (deviceId && deviceId !== currentDeviceId) {
+        // Restart the stream when the caller asks for a specific device that
+        // differs from the active one, or when switching back to the default
+        // (deviceId == null) after previously pinning a device.
+        const deviceChanged =
+          (deviceId != null && deviceId !== currentDeviceId) ||
+          (deviceId == null && currentDeviceId != null);
+        if (deviceChanged) {
           streamRef.current.getTracks().forEach((t) => t.stop());
           streamRef.current = null;
         } else {

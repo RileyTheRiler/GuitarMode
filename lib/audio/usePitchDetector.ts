@@ -47,6 +47,8 @@ export const DEFAULT_CONFIG: PitchDetectorConfig = {
   silenceFramesToRelease: 10,
 };
 
+const STORAGE_KEY = "guitarmode:detector-config:v1";
+
 const FRAME_SIZE = 2048;
 const HOP_SIZE = 1024;
 
@@ -140,6 +142,35 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
       return next;
     });
   }, []);
+
+  // Hydrate persisted config on mount, then write-through on future changes.
+  // Gated on a ref so the first write doesn't clobber storage before the read.
+  const configHydratedRef = useRef(false);
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      configHydratedRef.current = true;
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<PitchDetectorConfig>;
+        setConfigState((prev) => ({ ...prev, ...parsed }));
+      }
+    } catch (err) {
+      console.warn("usePitchDetector: failed to read persisted config", err);
+    }
+    configHydratedRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (!configHydratedRef.current || typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+    } catch (err) {
+      console.warn("usePitchDetector: failed to persist config", err);
+    }
+  }, [config]);
 
   const finalizeActive = useCallback((endTime: number) => {
     const midi = activeMidiRef.current;
@@ -433,7 +464,9 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
     tearDown(sinkRef as React.MutableRefObject<AudioNode | null>);
 
     if (audioContextRef.current) {
-      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current.close().catch((err) => {
+        console.warn("usePitchDetector: AudioContext close failed", err);
+      });
       audioContextRef.current = null;
     }
     detectorRef.current = null;
@@ -487,7 +520,9 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
 
   useEffect(() => {
     return () => {
-      if (audioContextRef.current) audioContextRef.current.close().catch(() => {});
+      if (audioContextRef.current) audioContextRef.current.close().catch((err) => {
+        console.warn("usePitchDetector: AudioContext close failed", err);
+      });
       if (fallbackIntervalRef.current != null) clearInterval(fallbackIntervalRef.current);
     };
   }, []);
