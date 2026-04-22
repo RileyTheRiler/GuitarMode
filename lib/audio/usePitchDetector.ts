@@ -297,7 +297,7 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
         }
       } else {
         // Only count silence frames when RMS drops below release threshold
-        if (rms < releaseThreshold || !passes) {
+        if (rms < releaseThreshold) {
           silenceFramesRef.current += 1;
         }
         if (

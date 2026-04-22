@@ -20,7 +20,7 @@ export function DetectedNotes({ notes, onDelete }: Props) {
     <div className="flex flex-wrap gap-2">
       {notes.map((n, i) => (
         <span
-          key={`${n.at}-${i}`}
+          key={n.at}
           className="inline-flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-sm text-zinc-100"
           title={`${n.durationMs.toFixed(0)} ms`}
         >
