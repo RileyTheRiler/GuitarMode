@@ -11,6 +11,7 @@ import { Timeline } from "@/components/Timeline";
 import { ChromaChart } from "@/components/ChromaChart";
 import { WaveformPlayer } from "@/components/WaveformPlayer";
 import { ProgressionEditor } from "@/components/ProgressionEditor";
+import { Metronome } from "@/components/Metronome";
 import { TimbreVisualizer } from "@/components/TimbreVisualizer";
 import { useMicStream } from "@/lib/audio/useMicStream";
 import { usePitchDetector, type DetectedNote } from "@/lib/audio/usePitchDetector";
@@ -33,9 +34,23 @@ export default function Home() {
 
   const [analyzing, setAnalyzing] = useState(false);
   const [recording, setRecording] = useState(false);
-  const [fileError, setFileError] = useState<string | null>(null);
+  const [appError, setAppError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [lastAudioBuffer, setLastAudioBuffer] = useState<AudioBuffer | null>(null);
+
+  // Mirror mic errors into appError so the most recent error wins over a stale one.
+  useEffect(() => {
+    if (mic.error) setAppError(mic.error);
+  }, [mic.error]);
+
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  const recordingGenRef = useRef(0);
 
   const [boxOn, setBoxOn] = useState(false);
   const [boxCenterFret, setBoxCenterFret] = useState(7);
@@ -79,11 +94,15 @@ export default function Home() {
       mic.stop();
       return;
     }
+    setAppError(null);
     try {
       const stream = await mic.start(mic.currentDeviceId);
       await detector.start(stream);
-    } catch {
-      /* error surfaced via mic.error */
+    } catch (e) {
+      // mic errors are mirrored via the effect above; catch detector-side failures here.
+      if (mic.streamRef.current) {
+        setAppError(e instanceof Error ? e.message : "Could not start analysis");
+      }
     }
   }, [detector, mic]);
 
@@ -94,11 +113,14 @@ export default function Home() {
       if (wasActive) {
         detector.stop();
       }
+      setAppError(null);
       try {
         const stream = await mic.start(nextId);
         if (wasActive) await detector.start(stream);
-      } catch {
-        /* error surfaced via mic.error */
+      } catch (e) {
+        if (mic.streamRef.current) {
+          setAppError(e instanceof Error ? e.message : "Could not switch input");
+        }
       }
     },
     [detector, mic]
@@ -107,13 +129,16 @@ export default function Home() {
   const handleReset = useCallback(() => {
     detector.reset();
     setSelectedIndex(null);
-    setFileError(null);
+    setAppError(null);
     setLastAudioBuffer(null);
   }, [detector]);
 
   const handleUpload = useCallback(
     async (file: File) => {
-      setFileError(null);
+      setAppError(null);
+      // Analyzing an uploaded file replaces the note buffer, so stop the live
+      // detector first to avoid it appending frames over the result.
+      if (detector.active) detector.stop();
       setAnalyzing(true);
       try {
         const arr = await file.arrayBuffer();
@@ -123,22 +148,39 @@ export default function Home() {
           polyphonic: detector.config.polyphonic,
           minClarity: detector.config.minClarity,
           minRms: detector.config.minRms,
+          highPass: detector.config.highPass,
+          highPassHz: detector.config.highPassHz,
         });
+        if (!mountedRef.current) return;
         detector.reset();
         detector.addNotes(result.notes);
         if (result.chroma.some((v) => v > 0)) detector.addChroma(result.chroma);
         setLastAudioBuffer(buffer);
       } catch (e) {
-        setFileError(e instanceof Error ? e.message : "Could not analyze file");
+        if (!mountedRef.current) return;
+        setAppError(e instanceof Error ? e.message : "Could not analyze file");
       } finally {
-        setAnalyzing(false);
+        if (mountedRef.current) setAnalyzing(false);
       }
     },
     [detector]
   );
 
   const handleStartRecording = useCallback(async () => {
-    setFileError(null);
+    setAppError(null);
+    // Avoid live detection writing into the note buffer while a recording is
+    // being captured — the onstop handler will replace notes wholesale.
+    if (detector.active) detector.stop();
+    const gen = ++recordingGenRef.current;
+    // Snapshot config at record-start so mid-recording changes don't skew analysis.
+    const cfgSnapshot = {
+      a4Hz: detector.config.a4Hz,
+      polyphonic: detector.config.polyphonic,
+      minClarity: detector.config.minClarity,
+      minRms: detector.config.minRms,
+      highPass: detector.config.highPass,
+      highPassHz: detector.config.highPassHz,
+    };
     try {
       const stream = mic.streamRef.current ?? (await mic.start(mic.currentDeviceId));
       const recorder = new MediaRecorder(stream);
@@ -149,32 +191,30 @@ export default function Home() {
       recorder.onstop = async () => {
         const blob = new Blob(recordedChunksRef.current, { type: "audio/webm" });
         recordedChunksRef.current = [];
-        setAnalyzing(true);
+        if (mountedRef.current) setAnalyzing(true);
         try {
           const arr = await blob.arrayBuffer();
           const buffer = await decodeArrayBuffer(arr);
-          const result = await analyzeAudioBuffer(buffer, {
-            a4Hz: detector.config.a4Hz,
-            polyphonic: detector.config.polyphonic,
-            minClarity: detector.config.minClarity,
-            minRms: detector.config.minRms,
-          });
+          const result = await analyzeAudioBuffer(buffer, cfgSnapshot);
+          // Bail out if a newer recording started or the component unmounted.
+          if (!mountedRef.current || gen !== recordingGenRef.current) return;
           const newNotes: DetectedNote[] = result.notes;
           detector.reset();
           detector.addNotes(newNotes);
           if (result.chroma.some((v) => v > 0)) detector.addChroma(result.chroma);
           setLastAudioBuffer(buffer);
         } catch (e) {
-          setFileError(e instanceof Error ? e.message : "Could not analyze recording");
+          if (!mountedRef.current || gen !== recordingGenRef.current) return;
+          setAppError(e instanceof Error ? e.message : "Could not analyze recording");
         } finally {
-          setAnalyzing(false);
+          if (mountedRef.current && gen === recordingGenRef.current) setAnalyzing(false);
         }
       };
       mediaRecorderRef.current = recorder;
       recorder.start();
       setRecording(true);
     } catch (e) {
-      setFileError(e instanceof Error ? e.message : "Recording failed");
+      setAppError(e instanceof Error ? e.message : "Recording failed");
     }
   }, [detector, mic]);
 
@@ -200,16 +240,16 @@ export default function Home() {
   const hasChroma = detector.chromaProfile.some((v) => v > 0);
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-8">
-      <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">GuitarMode</h1>
+    <main className="mx-auto max-w-6xl px-3 py-4 sm:px-4 sm:py-8">
+      <header className="mb-4 sm:mb-6">
+        <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">GuitarMode</h1>
         <p className="text-sm text-zinc-400">
           Play your guitar. I&rsquo;ll name the notes, guess the scale, and show you what&rsquo;s
           next on the fretboard.
         </p>
       </header>
 
-      <section className="mb-4 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+      <section className="mb-4 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:p-4">
         <MicControls
           micOn={detector.active}
           onToggleMic={handleToggleMic}
@@ -220,11 +260,11 @@ export default function Home() {
           recording={recording}
           analyzing={analyzing}
           level={detector.level}
-          error={mic.error ?? fileError}
+          error={appError}
         />
       </section>
 
-      <section className="mb-6">
+      <section className="mb-4 sm:mb-6">
         <InputSettings
           config={detector.config}
           onChange={detector.setConfig}
@@ -235,8 +275,8 @@ export default function Home() {
         />
       </section>
 
-      <section className="mb-6 grid gap-6 lg:grid-cols-2">
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+      <section className="mb-4 grid gap-4 sm:mb-6 sm:gap-6 lg:grid-cols-2">
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:p-4">
           <div className="mb-3 flex items-center justify-between gap-2">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
               Detected notes
@@ -259,7 +299,7 @@ export default function Home() {
             />
           )}
         </div>
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:p-4">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
             Scale &amp; mode suggestions
           </h2>
@@ -287,7 +327,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="mb-6 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+      <section className="mb-4 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:mb-6 sm:p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
             Timeline
@@ -299,7 +339,11 @@ export default function Home() {
         <Timeline notes={detector.notes} />
       </section>
 
-      <section className="mb-6">
+      <section className="mb-4 sm:mb-6">
+        <Metronome />
+      </section>
+
+      <section className="mb-4 sm:mb-6">
         <ProgressionEditor
           progression={progression}
           onChange={setProgression}
@@ -307,7 +351,7 @@ export default function Home() {
         />
       </section>
 
-      <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+      <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
             Fretboard

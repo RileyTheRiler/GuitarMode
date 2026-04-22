@@ -20,7 +20,7 @@ export function FretboardControls({
   numFrets,
 }: Props) {
   return (
-    <div className="flex flex-wrap items-center gap-4 text-xs text-zinc-400">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-zinc-400">
       <label className="flex items-center gap-2">
         <input
           type="checkbox"

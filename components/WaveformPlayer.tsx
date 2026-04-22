@@ -83,6 +83,7 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
     onTimeUpdate?.(0);
   }, [stopSource, onTimeUpdate]);
 
+  const startPlayback = useCallback(() => {
   const handlePlay = useCallback(() => {
     if (sourceRef.current) {
       // pause
@@ -106,14 +107,15 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
     src.connect(audioCtx.destination);
     src.start(0, startOffsetRef.current);
     src.onended = () => {
-      if (sourceRef.current === src) {
-        startOffsetRef.current = 0;
-        setPlaying(false);
-        setProgress(0);
-        sourceRef.current = null;
-        cancelAnimationFrame(rafRef.current);
-        onTimeUpdate?.(0);
-      }
+      if (sourceRef.current !== src) return;
+      sourceRef.current = null;
+      cancelAnimationFrame(rafRef.current);
+      // Natural end: leave playhead at the end so users see where playback finished.
+      // An explicit Stop resets via handleStop.
+      startOffsetRef.current = duration;
+      setPlaying(false);
+      setProgress(1);
+      onTimeUpdate?.(duration);
     };
     sourceRef.current = src;
     startAtRef.current = performance.now() - startOffsetRef.current * 1000;
@@ -126,6 +128,20 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
+  }, [audioBuffer, duration, onTimeUpdate]);
+
+  const handlePlay = useCallback(() => {
+    if (playing) {
+      const elapsed = (performance.now() - startAtRef.current) / 1000;
+      startOffsetRef.current = Math.min(startOffsetRef.current + elapsed, duration);
+      stopSource();
+      setPlaying(false);
+      return;
+    }
+    // If the previous play ran to completion, restart from the beginning.
+    if (startOffsetRef.current >= duration) startOffsetRef.current = 0;
+    startPlayback();
+  }, [duration, playing, stopSource, startPlayback]);
   }, [audioBuffer, duration, stopSource, onTimeUpdate]);
 
   // Click on waveform to seek
@@ -134,25 +150,25 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
       const canvas = canvasRef.current;
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
-      const fraction = (e.clientX - rect.left) / rect.width;
+      const fraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
       startOffsetRef.current = fraction * duration;
       onTimeUpdate?.(fraction * duration);
       if (playing) {
         stopSource();
-        setPlaying(false);
-        // Re-start from new offset
-        setTimeout(() => handlePlay(), 0);
+        startPlayback();
       } else {
         setProgress(fraction);
       }
     },
-    [duration, handlePlay, playing, stopSource, onTimeUpdate]
+    [duration, playing, stopSource, startPlayback, onTimeUpdate]
   );
 
   useEffect(() => {
     return () => {
       stopSource();
-      ctxRef.current?.close().catch(() => {});
+      ctxRef.current?.close().catch((err) => {
+        console.warn("WaveformPlayer: AudioContext close failed", err);
+      });
     };
   }, [stopSource]);
 
