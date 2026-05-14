@@ -45,6 +45,47 @@ export function scheduleClick(time: number, accent = false) {
 }
 
 /**
+ * Schedule a guitar-ish pluck at a specific AudioContext time. Unlike
+ * playPluck(), this uses the audio clock for sample-accurate timing so it can
+ * be called ahead-of-time to schedule an entire solo. The decay window starts
+ * at `time`; pass `ctx.currentTime` to play immediately.
+ */
+export function schedulePluck(midi: number, time: number, a4Hz = 440) {
+  const ctx = getContext();
+  if (ctx.state === "suspended") ctx.resume().catch(() => {});
+  const fundamental = midiToFreq(midi, a4Hz);
+
+  const master = ctx.createGain();
+  master.gain.setValueAtTime(0, time);
+  master.gain.linearRampToValueAtTime(0.22, time + 0.005);
+  master.gain.exponentialRampToValueAtTime(0.0005, time + 0.85);
+
+  const filter = ctx.createBiquadFilter();
+  filter.type = "lowpass";
+  filter.frequency.setValueAtTime(fundamental * 8, time);
+  filter.frequency.exponentialRampToValueAtTime(fundamental * 2, time + 0.85);
+  filter.Q.value = 1;
+
+  for (const detune of [-6, 6]) {
+    const osc = ctx.createOscillator();
+    osc.type = "triangle";
+    osc.frequency.value = fundamental;
+    osc.detune.value = detune;
+    osc.connect(filter);
+    osc.start(time);
+    osc.stop(time + 1.0);
+  }
+
+  filter.connect(master);
+  master.connect(ctx.destination);
+
+  const cleanupMs = Math.max(0, (time - ctx.currentTime) * 1000) + 1100;
+  setTimeout(() => {
+    try { master.disconnect(); filter.disconnect(); } catch {}
+  }, cleanupMs);
+}
+
+/**
  * Play a short, guitar-ish pluck at the given MIDI pitch. Uses a pair of
  * slightly-detuned triangle oscillators through an exponential envelope.
  * Good enough for previewing a fretboard position.

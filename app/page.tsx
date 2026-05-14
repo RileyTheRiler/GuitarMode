@@ -13,6 +13,7 @@ import { WaveformPlayer } from "@/components/WaveformPlayer";
 import { ProgressionEditor } from "@/components/ProgressionEditor";
 import { Metronome } from "@/components/Metronome";
 import { TimbreVisualizer } from "@/components/TimbreVisualizer";
+import { SoloGenerator } from "@/components/SoloGenerator";
 import { useMicStream } from "@/lib/audio/useMicStream";
 import { usePitchDetector, type DetectedNote } from "@/lib/audio/usePitchDetector";
 import { analyzeAudioBuffer, decodeArrayBuffer } from "@/lib/audio/analyzeBuffer";
@@ -337,6 +338,10 @@ export default function Home() {
           </p>
         </div>
         <Timeline notes={detector.notes} />
+      </section>
+
+      <section className="mb-4 sm:mb-6">
+        <SoloGenerator />
       </section>
 
       <section className="mb-4 sm:mb-6">
