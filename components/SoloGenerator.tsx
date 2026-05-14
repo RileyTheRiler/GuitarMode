@@ -7,6 +7,8 @@ import { createSoloPlayer, type SoloPlayer } from "@/lib/audio/soloPlayer";
 import { NOTE_NAMES, colorForPitchClass } from "@/lib/music/notes";
 import { parseChord } from "@/lib/music/chords";
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
 const STYLE_OPTIONS = [
   { value: "rock" as const, label: "Rock" },
   { value: "blues" as const, label: "Blues" },
@@ -20,6 +22,84 @@ const PRESET_PROGRESSIONS = [
   { label: "Dorian jam", value: "Dm G Dm G" },
   { label: "Minor pentatonic", value: "Em Am Em B7" },
 ];
+
+const BEATS_PER_CHORD_OPTIONS = [2, 4, 8];
+
+// ─── Tab builder ──────────────────────────────────────────────────────────────
+
+const TAB_STRING_LABELS = ["e", "B", "G", "D", "A", "E"] as const;
+const CELL_W = 2; // chars per 8th-note slot
+const RESOLUTION = 0.5; // 8th notes
+
+function buildTabSystems(
+  solo: GeneratedSolo,
+  chords: string[],
+  beatsPerChord: number
+): string[] {
+  const cellsPerBar = Math.round(beatsPerChord / RESOLUTION);
+  const totalCells = Math.max(1, Math.ceil(solo.totalBeats / RESOLUTION));
+
+  // grid[displayStringIdx 0=e…5=E][cell] = fret or null
+  const grid: (number | null)[][] = Array(6)
+    .fill(null)
+    .map(() => new Array(totalCells).fill(null));
+
+  for (const note of solo.notes) {
+    const cell = Math.min(
+      Math.round(note.startBeat / RESOLUTION),
+      totalCells - 1
+    );
+    const ds = 5 - note.stringIndex; // flip: high e → display row 0
+    if (cell >= 0 && ds >= 0 && ds < 6 && grid[ds][cell] === null) {
+      grid[ds][cell] = note.fret;
+    }
+  }
+
+  const BARS_PER_SYSTEM = 4;
+  const systems: string[] = [];
+
+  for (
+    let sysStart = 0;
+    sysStart < totalCells;
+    sysStart += cellsPerBar * BARS_PER_SYSTEM
+  ) {
+    const sysEnd = Math.min(
+      sysStart + cellsPerBar * BARS_PER_SYSTEM,
+      totalCells
+    );
+    const barOffset = Math.floor(sysStart / cellsPerBar);
+
+    // Chord label header
+    let chordLine = "   ";
+    const numBarsInSys = Math.ceil((sysEnd - sysStart) / cellsPerBar);
+    for (let b = 0; b < numBarsInSys; b++) {
+      const ci = (barOffset + b) % Math.max(chords.length, 1);
+      chordLine += (chords[ci] ?? "").padEnd(cellsPerBar * CELL_W, " ");
+    }
+
+    // Six string lines
+    const stringLines = TAB_STRING_LABELS.map((label, si) => {
+      let line = label + "|";
+      for (let c = sysStart; c < sysEnd; c++) {
+        // Insert bar line between bars (not at the very start)
+        if (c !== sysStart && (c - sysStart) % cellsPerBar === 0) {
+          line += "|";
+        }
+        const fret = grid[si][c];
+        if (fret !== null) {
+          line += String(fret).padEnd(CELL_W, "-");
+        } else {
+          line += "-".repeat(CELL_W);
+        }
+      }
+      return line + "|";
+    });
+
+    systems.push([chordLine, ...stringLines].join("\n"));
+  }
+
+  return systems;
+}
 
 // ─── Piano roll ──────────────────────────────────────────────────────────────
 
@@ -35,17 +115,15 @@ function PianoRoll({
   const { notes, totalBeats } = solo;
   if (notes.length === 0) return null;
 
-  const midiValues = notes.map((n) => n.midi);
-  const minMidi = Math.min(...midiValues) - 1;
-  const maxMidi = Math.max(...midiValues) + 2;
+  const midiVals = notes.map((n) => n.midi);
+  const minMidi = Math.min(...midiVals) - 1;
+  const maxMidi = Math.max(...midiVals) + 2;
   const midiRange = maxMidi - minMidi;
 
-  // viewBox units: x = beats×12, y = semitones from bottom
   const VX = (beat: number) => beat * 12;
-  const VY = (midi: number) => (maxMidi - midi) * (60 / midiRange);
-  const VH = 60; // total viewBox height in semitone-units
+  const VY = (midi: number) => ((maxMidi - midi) / midiRange) * 60;
+  const VH = 60;
   const VW = totalBeats * 12;
-
   const beatsPerChord = totalBeats / Math.max(chords.length, 1);
 
   return (
@@ -54,30 +132,26 @@ function PianoRoll({
         <svg
           viewBox={`0 0 ${VW} ${VH + 12}`}
           preserveAspectRatio="none"
-          style={{ width: "100%", minWidth: Math.max(VW * 4, 300), height: 90, display: "block" }}
+          style={{
+            width: "100%",
+            minWidth: Math.max(VW * 4, 300),
+            height: 90,
+            display: "block",
+          }}
         >
-          {/* Background */}
           <rect x={0} y={0} width={VW} height={VH} fill="#18181b" />
 
-          {/* Chord boundary lines + labels */}
           {chords.map((chord, i) => {
             const x = VX(i * beatsPerChord);
             return (
               <g key={i}>
                 <line
-                  x1={x}
-                  x2={x}
-                  y1={0}
-                  y2={VH}
-                  stroke="#3f3f46"
-                  strokeWidth={0.6}
+                  x1={x} x2={x} y1={0} y2={VH}
+                  stroke="#3f3f46" strokeWidth={0.6}
                 />
                 <text
-                  x={x + 1.2}
-                  y={VH + 9}
-                  fontSize={7}
-                  fill="#71717a"
-                  fontFamily="monospace"
+                  x={x + 1.2} y={VH + 9}
+                  fontSize={7} fill="#71717a" fontFamily="monospace"
                 >
                   {chord}
                 </text>
@@ -85,39 +159,28 @@ function PianoRoll({
             );
           })}
 
-          {/* Notes */}
-          {notes.map((note, i) => {
-            const x = VX(note.startBeat);
-            const y = VY(note.midi);
-            const w = Math.max(VX(note.durationBeats) - 0.8, 1.5);
-            const h = Math.max(VH / midiRange - 0.4, 1.5);
-            const color = colorForPitchClass(note.pitchClass);
-            return (
-              <rect
-                key={i}
-                x={x}
-                y={y}
-                width={w}
-                height={h}
-                fill={color}
-                opacity={0.75}
-                rx={0.5}
-              />
-            );
-          })}
-
-          {/* Playhead */}
-          {playheadBeat != null && playheadBeat >= 0 && playheadBeat <= totalBeats && (
-            <line
-              x1={VX(playheadBeat)}
-              x2={VX(playheadBeat)}
-              y1={0}
-              y2={VH}
-              stroke="white"
-              strokeWidth={1.2}
-              opacity={0.8}
+          {notes.map((note, i) => (
+            <rect
+              key={i}
+              x={VX(note.startBeat)}
+              y={VY(note.midi)}
+              width={Math.max(VX(note.durationBeats) - 0.8, 1.5)}
+              height={Math.max((60 / midiRange) - 0.4, 1.5)}
+              fill={colorForPitchClass(note.pitchClass)}
+              opacity={0.75}
+              rx={0.5}
             />
-          )}
+          ))}
+
+          {playheadBeat != null &&
+            playheadBeat >= 0 &&
+            playheadBeat <= totalBeats && (
+              <line
+                x1={VX(playheadBeat)} x2={VX(playheadBeat)}
+                y1={0} y2={VH}
+                stroke="white" strokeWidth={1.2} opacity={0.8}
+              />
+            )}
         </svg>
       </div>
       <p className="px-2 py-0.5 text-right text-[10px] text-zinc-600">
@@ -127,13 +190,52 @@ function PianoRoll({
   );
 }
 
+// ─── Tab display ─────────────────────────────────────────────────────────────
+
+function TabDisplay({
+  solo,
+  chords,
+  beatsPerChord,
+}: {
+  solo: GeneratedSolo;
+  chords: string[];
+  beatsPerChord: number;
+}) {
+  const systems = buildTabSystems(solo, chords, beatsPerChord);
+  return (
+    <div className="mb-3">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+          Guitar Tab
+        </span>
+        <span className="text-[10px] text-zinc-600">8th-note grid</span>
+      </div>
+      <div className="overflow-x-auto rounded-md border border-zinc-700 bg-zinc-950 p-3">
+        <div className="flex flex-col gap-4">
+          {systems.map((sys, i) => (
+            <pre
+              key={i}
+              className="font-mono text-xs leading-tight text-zinc-300 selection:bg-violet-800"
+            >
+              {sys}
+            </pre>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function SoloGenerator() {
   const [chordsInput, setChordsInput] = useState("Am G F E");
   const [bpm, setBpm] = useState(100);
+  const [beatsPerChord, setBeatsPerChord] = useState(4);
   const [style, setStyle] = useState<"rock" | "blues" | "jazz">("rock");
   const [loop, setLoop] = useState(false);
+  const [showTab, setShowTab] = useState(true);
+
   const [solo, setSolo] = useState<GeneratedSolo | null>(null);
   const [playing, setPlaying] = useState(false);
   const [currentNote, setCurrentNote] = useState<SoloNote | null>(null);
@@ -143,10 +245,8 @@ export function SoloGenerator() {
   const playerRef = useRef<SoloPlayer | null>(null);
   const loopRef = useRef(false);
   const soloRef = useRef<GeneratedSolo | null>(null);
-  const playStartWallRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
 
-  // Keep refs in sync with state
   useEffect(() => { loopRef.current = loop; }, [loop]);
   useEffect(() => { soloRef.current = solo; }, [solo]);
 
@@ -154,14 +254,14 @@ export function SoloGenerator() {
     return input.split(/[\s,]+/).filter(Boolean);
   }
 
-  // Animated playhead via rAF
+  // ── Playhead rAF ──
+
   function startPlayheadRaf(thisSolo: GeneratedSolo) {
-    const LOOKAHEAD_MS = 120; // must match soloPlayer.ts LOOKAHEAD_S × 1000
+    const LOOKAHEAD_MS = 120;
     const startWall = performance.now() + LOOKAHEAD_MS;
 
     function tick() {
-      const elapsed = (performance.now() - startWall) / 1000; // seconds
-      const beat = elapsed * (thisSolo.bpm / 60);
+      const beat = ((performance.now() - startWall) / 1000) * (thisSolo.bpm / 60);
       if (beat <= thisSolo.totalBeats + 0.1) {
         setPlayheadBeat(Math.min(beat, thisSolo.totalBeats));
         rafRef.current = requestAnimationFrame(tick);
@@ -182,8 +282,12 @@ export function SoloGenerator() {
     setPlayheadBeat(null);
   }
 
-  // Start the player (called on Play and on each loop iteration)
-  const startPlayer = useCallback((targetSolo: GeneratedSolo) => {
+  // ── Player ──
+
+  // Kept in a ref so the onComplete closure always calls the latest version.
+  const startPlayerRef = useRef<(s: GeneratedSolo) => void>(() => {});
+
+  function startPlayerImpl(targetSolo: GeneratedSolo) {
     playerRef.current?.stop();
 
     const player = createSoloPlayer(targetSolo, {
@@ -191,7 +295,7 @@ export function SoloGenerator() {
       onNoteEnd: () => setCurrentNote(null),
       onComplete: () => {
         if (loopRef.current && soloRef.current) {
-          startPlayer(soloRef.current);
+          startPlayerRef.current(soloRef.current);
         } else {
           setPlaying(false);
           setCurrentNote(null);
@@ -199,10 +303,16 @@ export function SoloGenerator() {
         }
       },
     });
+
     playerRef.current = player;
     player.start();
     startPlayheadRaf(targetSolo);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }
+
+  // Keep ref pointing at latest closure
+  startPlayerRef.current = startPlayerImpl;
+
+  // ── Generate ──
 
   const handleGenerate = useCallback(() => {
     const chords = parseChordList(chordsInput);
@@ -210,7 +320,6 @@ export function SoloGenerator() {
       setError("Enter at least one chord (e.g. Am G F E)");
       return;
     }
-    // Validate at least one chord is parseable
     if (!chords.some((c) => parseChord(c.trim()))) {
       setError("No valid chords found. Try: Am G F E");
       return;
@@ -224,7 +333,7 @@ export function SoloGenerator() {
 
     const generated = generateSolo({
       chords,
-      beatsPerChord: 4,
+      beatsPerChord,
       bpm,
       seed: Date.now(),
       style,
@@ -236,11 +345,12 @@ export function SoloGenerator() {
     }
 
     setSolo(generated);
-  }, [chordsInput, bpm, style]);
+  }, [chordsInput, bpm, beatsPerChord, style]);
+
+  // ── Play / Stop ──
 
   const handlePlayStop = useCallback(() => {
     if (!solo) return;
-
     if (playing) {
       playerRef.current?.stop();
       stopPlayheadRaf();
@@ -248,10 +358,9 @@ export function SoloGenerator() {
       setCurrentNote(null);
       return;
     }
-
     setPlaying(true);
-    startPlayer(solo);
-  }, [solo, playing, startPlayer]);
+    startPlayerRef.current(solo);
+  }, [solo, playing]);
 
   // Generate default solo on first mount
   useEffect(() => {
@@ -259,7 +368,6 @@ export function SoloGenerator() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       playerRef.current?.stop();
@@ -269,13 +377,11 @@ export function SoloGenerator() {
 
   const rootName = solo ? NOTE_NAMES[solo.scaleRoot] : null;
   const chordList = parseChordList(chordsInput);
-
-  // Box covers [centerFret, centerFret+7]: center at +3, window=4 → [−1, +7]
   const boxCenter = solo ? solo.centerFret + 3 : null;
 
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:p-4">
-      {/* Header */}
+      {/* ── Header ── */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
@@ -294,19 +400,18 @@ export function SoloGenerator() {
           )}
         </div>
 
-        {/* Live indicator */}
         {playing && (
           <span className="flex items-center gap-1.5 text-xs text-green-400">
             <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
             </span>
-            {loopRef.current ? "Looping" : "Playing"}
+            {loop ? "Looping" : "Playing"}
           </span>
         )}
       </div>
 
-      {/* Controls row */}
+      {/* ── Controls ── */}
       <div className="mb-4 flex flex-wrap gap-3">
         {/* Chord input */}
         <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -326,13 +431,31 @@ export function SoloGenerator() {
           <label className="text-xs text-zinc-500">BPM: {bpm}</label>
           <input
             type="range"
-            min={60}
-            max={200}
-            step={5}
+            min={60} max={200} step={5}
             value={bpm}
             onChange={(e) => setBpm(Number(e.target.value))}
             className="w-28 accent-violet-500"
           />
+        </div>
+
+        {/* Beats per chord */}
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-zinc-500">Beats / chord</label>
+          <div className="flex gap-1">
+            {BEATS_PER_CHORD_OPTIONS.map((b) => (
+              <button
+                key={b}
+                onClick={() => setBeatsPerChord(b)}
+                className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                  beatsPerChord === b
+                    ? "bg-violet-600 text-white"
+                    : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+                }`}
+              >
+                {b}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Style */}
@@ -356,7 +479,7 @@ export function SoloGenerator() {
         </div>
       </div>
 
-      {/* Preset progressions */}
+      {/* ── Presets ── */}
       <div className="mb-4 flex flex-wrap items-center gap-1.5">
         <span className="text-xs text-zinc-600">Presets:</span>
         {PRESET_PROGRESSIONS.map((p) => (
@@ -370,7 +493,7 @@ export function SoloGenerator() {
         ))}
       </div>
 
-      {/* Action buttons */}
+      {/* ── Action buttons ── */}
       <div className="mb-4 flex flex-wrap gap-2">
         <button
           onClick={handleGenerate}
@@ -389,8 +512,6 @@ export function SoloGenerator() {
         >
           {playing ? "Stop" : "Play solo"}
         </button>
-
-        {/* Loop toggle */}
         <button
           onClick={() => setLoop((l) => !l)}
           className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
@@ -398,9 +519,14 @@ export function SoloGenerator() {
               ? "border-amber-600 bg-amber-900/60 text-amber-300 hover:bg-amber-900"
               : "border-zinc-700 bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
           }`}
-          title="Loop solo"
         >
           {loop ? "Loop: on" : "Loop: off"}
+        </button>
+        <button
+          onClick={() => setShowTab((s) => !s)}
+          className="rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:bg-zinc-700"
+        >
+          {showTab ? "Hide tab" : "Show tab"}
         </button>
       </div>
 
@@ -410,11 +536,11 @@ export function SoloGenerator() {
         </p>
       )}
 
-      {/* Currently playing note info */}
+      {/* ── Note readout ── */}
       {currentNote ? (
         <div className="mb-3 flex items-center gap-2 rounded-md bg-zinc-800/60 px-3 py-1.5 text-xs text-zinc-300">
           <span
-            className="inline-block h-2.5 w-2.5 rounded-full"
+            className="inline-block h-2.5 w-2.5 flex-shrink-0 rounded-full"
             style={{ background: colorForPitchClass(currentNote.pitchClass) }}
           />
           <span className="font-semibold text-white">
@@ -427,10 +553,10 @@ export function SoloGenerator() {
           </span>
         </div>
       ) : (
-        <div className="mb-3 h-7" /> /* placeholder to avoid layout shift */
+        <div className="mb-3 h-7" />
       )}
 
-      {/* Piano roll */}
+      {/* ── Piano roll ── */}
       {solo && (
         <PianoRoll
           solo={solo}
@@ -439,7 +565,16 @@ export function SoloGenerator() {
         />
       )}
 
-      {/* Fretboard visualization */}
+      {/* ── Guitar tab ── */}
+      {solo && showTab && (
+        <TabDisplay
+          solo={solo}
+          chords={chordList}
+          beatsPerChord={beatsPerChord}
+        />
+      )}
+
+      {/* ── Fretboard ── */}
       {solo && (
         <>
           <Fretboard
@@ -456,7 +591,7 @@ export function SoloGenerator() {
             boxWindow={4}
           />
           <p className="mt-2 text-xs text-zinc-600">
-            Outlined = scale notes in position box. Pulsing dot = note being played right now.
+            Outlined = scale notes in position box · Pulsing = note being played right now
           </p>
         </>
       )}
