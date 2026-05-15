@@ -1,6 +1,6 @@
 "use client";
 
-import { getToneContext, schedulePluck } from "./tonePlayer";
+import { getToneContext, schedulePluck, scheduleBend } from "./tonePlayer";
 import type { GeneratedSolo, SoloNote } from "../music/soloGenerator";
 
 export interface SoloPlayerCallbacks {
@@ -54,7 +54,14 @@ export function createSoloPlayer(
     // Pre-schedule every note on the audio clock for glitch-free playback.
     for (const note of solo.notes) {
       const noteAudioTime = audioStart + beatsToSec(note.startBeat);
-      schedulePluck(note.midi, noteAudioTime);
+      if (note.technique === "bend" && note.bendSemitones) {
+        // Bend duration scales with note duration but caps at 300ms so fast
+        // notes still sound like a snappy bend, not a slow glide.
+        const bendMs = Math.min(beatsToSec(note.durationBeats) * 600, 300);
+        scheduleBend(note.midi, note.bendSemitones, noteAudioTime, bendMs);
+      } else {
+        schedulePluck(note.midi, noteAudioTime);
+      }
     }
 
     // Fire UI callbacks via wall-clock timeouts (≈1–2 ms jitter is fine for visuals).

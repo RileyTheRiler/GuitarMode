@@ -6,6 +6,7 @@ import { generateSolo, type GeneratedSolo, type SoloNote } from "@/lib/music/sol
 import { createSoloPlayer, type SoloPlayer } from "@/lib/audio/soloPlayer";
 import { NOTE_NAMES, colorForPitchClass } from "@/lib/music/notes";
 import { parseChord } from "@/lib/music/chords";
+import type { NoteTechnique } from "@/lib/music/soloGenerator";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -28,8 +29,26 @@ const BEATS_PER_CHORD_OPTIONS = [2, 4, 8];
 // ─── Tab builder ──────────────────────────────────────────────────────────────
 
 const TAB_STRING_LABELS = ["e", "B", "G", "D", "A", "E"] as const;
-const CELL_W = 2; // chars per 8th-note slot
-const RESOLUTION = 0.5; // 8th notes
+// 3-char cells: single-digit "5b-", double-digit "12b"
+const CELL_W = 3;
+const RESOLUTION = 0.5; // 8th-note grid
+
+const TECHNIQUE_CHAR: Record<NoteTechnique, string> = {
+  bend: "b",
+  hammer: "h",
+  pull: "p",
+  slide_up: "/",
+  slide_down: "\\",
+};
+
+interface GridCell { fret: number; technique?: NoteTechnique }
+
+function cellStr(cell: GridCell): string {
+  const f = String(cell.fret);
+  const t = cell.technique ? TECHNIQUE_CHAR[cell.technique] : "-";
+  if (f.length >= 2) return (f + t).slice(0, CELL_W);   // "12b" or "12-"
+  return f + t + "-";                                     // "5b-" or "5--"
+}
 
 function buildTabSystems(
   solo: GeneratedSolo,
@@ -39,8 +58,8 @@ function buildTabSystems(
   const cellsPerBar = Math.round(beatsPerChord / RESOLUTION);
   const totalCells = Math.max(1, Math.ceil(solo.totalBeats / RESOLUTION));
 
-  // grid[displayStringIdx 0=e…5=E][cell] = fret or null
-  const grid: (number | null)[][] = Array(6)
+  // grid[displayStringIdx 0=e…5=E][cell]
+  const grid: (GridCell | null)[][] = Array(6)
     .fill(null)
     .map(() => new Array(totalCells).fill(null));
 
@@ -49,9 +68,9 @@ function buildTabSystems(
       Math.round(note.startBeat / RESOLUTION),
       totalCells - 1
     );
-    const ds = 5 - note.stringIndex; // flip: high e → display row 0
+    const ds = 5 - note.stringIndex;
     if (cell >= 0 && ds >= 0 && ds < 6 && grid[ds][cell] === null) {
-      grid[ds][cell] = note.fret;
+      grid[ds][cell] = { fret: note.fret, technique: note.technique };
     }
   }
 
@@ -63,34 +82,22 @@ function buildTabSystems(
     sysStart < totalCells;
     sysStart += cellsPerBar * BARS_PER_SYSTEM
   ) {
-    const sysEnd = Math.min(
-      sysStart + cellsPerBar * BARS_PER_SYSTEM,
-      totalCells
-    );
+    const sysEnd = Math.min(sysStart + cellsPerBar * BARS_PER_SYSTEM, totalCells);
     const barOffset = Math.floor(sysStart / cellsPerBar);
-
-    // Chord label header
-    let chordLine = "   ";
     const numBarsInSys = Math.ceil((sysEnd - sysStart) / cellsPerBar);
+
+    let chordLine = "   ";
     for (let b = 0; b < numBarsInSys; b++) {
       const ci = (barOffset + b) % Math.max(chords.length, 1);
       chordLine += (chords[ci] ?? "").padEnd(cellsPerBar * CELL_W, " ");
     }
 
-    // Six string lines
     const stringLines = TAB_STRING_LABELS.map((label, si) => {
       let line = label + "|";
       for (let c = sysStart; c < sysEnd; c++) {
-        // Insert bar line between bars (not at the very start)
-        if (c !== sysStart && (c - sysStart) % cellsPerBar === 0) {
-          line += "|";
-        }
-        const fret = grid[si][c];
-        if (fret !== null) {
-          line += String(fret).padEnd(CELL_W, "-");
-        } else {
-          line += "-".repeat(CELL_W);
-        }
+        if (c !== sysStart && (c - sysStart) % cellsPerBar === 0) line += "|";
+        const cell = grid[si][c];
+        line += cell ? cellStr(cell) : "-".repeat(CELL_W);
       }
       return line + "|";
     });
@@ -201,14 +208,34 @@ function TabDisplay({
   chords: string[];
   beatsPerChord: number;
 }) {
+  const [copied, setCopied] = useState(false);
   const systems = buildTabSystems(solo, chords, beatsPerChord);
+
+  function handleCopy() {
+    const text = systems.join("\n\n");
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {});
+  }
+
   return (
     <div className="mb-3">
-      <div className="mb-1 flex items-center justify-between">
+      <div className="mb-1 flex items-center justify-between gap-2">
         <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
           Guitar Tab
         </span>
-        <span className="text-[10px] text-zinc-600">8th-note grid</span>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-zinc-600">
+            b=bend · h=hammer · p=pull · /=slide
+          </span>
+          <button
+            onClick={handleCopy}
+            className="rounded border border-zinc-700 bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-400 transition-colors hover:border-zinc-500 hover:text-zinc-200"
+          >
+            {copied ? "Copied!" : "Copy"}
+          </button>
+        </div>
       </div>
       <div className="overflow-x-auto rounded-md border border-zinc-700 bg-zinc-950 p-3">
         <div className="flex flex-col gap-4">

@@ -4,6 +4,8 @@ import { parseChord, chordPitchClasses, type ChordQuality } from "./chords";
 import { detectScales } from "./detectScale";
 import { allPositions, type FretPosition, STANDARD_TUNING } from "../guitar/fretboard";
 
+export type NoteTechnique = "bend" | "hammer" | "pull" | "slide_up" | "slide_down";
+
 export interface SoloNote {
   stringIndex: number;
   fret: number;
@@ -11,6 +13,9 @@ export interface SoloNote {
   pitchClass: number;
   startBeat: number;
   durationBeats: number;
+  technique?: NoteTechnique;
+  /** For bends: how many semitones to glide up (typically 1 or 2). */
+  bendSemitones?: number;
 }
 
 export interface GeneratedSolo {
@@ -281,6 +286,54 @@ export function generateSolo(params: SoloParams): GeneratedSolo {
     }
 
     phraseDir = -phraseDir;
+  }
+
+  // ── Technique assignment ─────────────────────────────────────────────────
+
+  // Pass 1: hammer-ons, pull-offs, slides between adjacent same-string notes.
+  for (let i = 0; i < notes.length - 1; i++) {
+    const curr = notes[i];
+    const next = notes[i + 1];
+    if (curr.stringIndex !== next.stringIndex) continue;
+    // Must be directly legato (no audible gap)
+    const gap = next.startBeat - (curr.startBeat + curr.durationBeats);
+    if (gap > 0.06) continue;
+
+    const diff = next.fret - curr.fret;
+    if (diff >= 1 && diff <= 2) {
+      curr.technique = "hammer";
+    } else if (diff <= -1 && diff >= -2) {
+      curr.technique = "pull";
+    } else if (diff >= 3) {
+      curr.technique = "slide_up";
+    } else if (diff <= -3) {
+      curr.technique = "slide_down";
+    }
+  }
+
+  // Pass 2: bends on high strings (G / B / e) for blues & rock phrasing.
+  //   A bend targets the nearest scale note 1 or 2 semitones above.
+  const bendChance = style === "blues" ? 0.28 : style === "rock" ? 0.14 : 0.05;
+  for (const note of notes) {
+    if (note.technique) continue;        // already has a technique
+    if (note.stringIndex < 3) continue;  // only G, B, high-e
+
+    if (rng.next() < bendChance) {
+      // Find how many semitones to the next note in the scale above this one.
+      let semUp: number | undefined;
+      for (let delta = 1; delta <= 2; delta++) {
+        if (scalePCs.has((note.pitchClass + delta) % 12)) {
+          semUp = delta;
+          break;
+        }
+      }
+      if (semUp !== undefined) {
+        note.technique = "bend";
+        note.bendSemitones = semUp;
+        // Bends ring out a bit longer than plucked notes.
+        note.durationBeats = Math.max(note.durationBeats, 0.5);
+      }
+    }
   }
 
   return { notes, bpm, totalBeats, scaleRoot, scaleName, scalePitchClasses: scalePCs, centerFret };
