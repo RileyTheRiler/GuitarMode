@@ -411,17 +411,18 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
         const worklet = new AudioWorkletNode(ctx, "frame-producer", {
           processorOptions: { frameSize: FRAME_SIZE, hopSize: HOP_SIZE },
         });
-        source.connect(hp);
-        hp.connect(worklet);
-        worklet.connect(sink);
-        sink.connect(ctx.destination);
-        workletRef.current = worklet;
-
+        // Assign the message handler before wiring the audio graph so the
+        // worklet's first frames aren't dropped while the handler is unset.
         worklet.port.onmessage = (ev: MessageEvent<{ frame: Float32Array }>) => {
           const raw = ev.data?.frame;
           if (!raw) return;
           processFrame(raw as Float32Array<ArrayBuffer>);
         };
+        source.connect(hp);
+        hp.connect(worklet);
+        worklet.connect(sink);
+        sink.connect(ctx.destination);
+        workletRef.current = worklet;
       } else {
         // Fallback: AnalyserNode polled via setInterval
         const analyser = ctx.createAnalyser();

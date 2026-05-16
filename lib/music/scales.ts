@@ -29,7 +29,6 @@ export const SCALE_TEMPLATES: ScaleTemplate[] = [
 
   // Exotic
   { name: "Phrygian Dominant", intervals: [0, 1, 4, 5, 7, 8, 10], specificity: 0.6 },
-  { name: "Lydian #4", intervals: [0, 2, 4, 6, 7, 9, 11], specificity: 0.6 },
   { name: "Lydian Dominant", intervals: [0, 2, 4, 6, 7, 9, 10], specificity: 0.6 },
   { name: "Altered (Super Locrian)", intervals: [0, 1, 3, 4, 6, 8, 10], specificity: 0.8 },
   { name: "Hungarian Minor", intervals: [0, 2, 3, 6, 7, 8, 11], specificity: 0.8 },

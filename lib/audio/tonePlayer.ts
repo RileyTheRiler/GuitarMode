@@ -66,6 +66,7 @@ export function playPluck(midi: number, a4Hz = 440) {
   filter.frequency.exponentialRampToValueAtTime(fundamental * 2, now + 0.9);
   filter.Q.value = 1;
 
+  const oscillators: OscillatorNode[] = [];
   for (const detune of [-6, 6]) {
     const osc = ctx.createOscillator();
     osc.type = "triangle";
@@ -74,16 +75,18 @@ export function playPluck(midi: number, a4Hz = 440) {
     osc.connect(filter);
     osc.start(now);
     osc.stop(now + 1.0);
+    oscillators.push(osc);
   }
 
   filter.connect(master);
   master.connect(ctx.destination);
 
-  // Disconnect after the envelope has fully decayed.
-  setTimeout(() => {
+  // Disconnect after the last oscillator finishes, so the cleanup tracks the
+  // actual envelope end rather than a magic timeout.
+  oscillators[oscillators.length - 1].onended = () => {
     try {
       master.disconnect();
       filter.disconnect();
     } catch {}
-  }, 1100);
+  };
 }

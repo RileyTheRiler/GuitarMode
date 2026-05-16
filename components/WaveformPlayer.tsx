@@ -84,16 +84,6 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
   }, [stopSource, onTimeUpdate]);
 
   const startPlayback = useCallback(() => {
-  const handlePlay = useCallback(() => {
-    if (sourceRef.current) {
-      // pause
-      const elapsed = (performance.now() - startAtRef.current) / 1000;
-      startOffsetRef.current = Math.min(startOffsetRef.current + elapsed, duration);
-      stopSource();
-      setPlaying(false);
-      return;
-    }
-
     const AudioCtx =
       window.AudioContext ||
       (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -142,7 +132,6 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
     if (startOffsetRef.current >= duration) startOffsetRef.current = 0;
     startPlayback();
   }, [duration, playing, stopSource, startPlayback]);
-  }, [audioBuffer, duration, stopSource, onTimeUpdate]);
 
   // Click on waveform to seek
   const handleSeek = useCallback(

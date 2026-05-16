@@ -101,6 +101,7 @@ export default function Home() {
     } catch (e) {
       // mic errors are mirrored via the effect above; catch detector-side failures here.
       if (mic.streamRef.current) {
+        mic.stop();
         setAppError(e instanceof Error ? e.message : "Could not start analysis");
       }
     }
@@ -119,6 +120,7 @@ export default function Home() {
         if (wasActive) await detector.start(stream);
       } catch (e) {
         if (mic.streamRef.current) {
+          mic.stop();
           setAppError(e instanceof Error ? e.message : "Could not switch input");
         }
       }
