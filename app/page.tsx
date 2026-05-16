@@ -369,6 +369,7 @@ export default function Home() {
             selectedIndex={selectedIndex}
             onSelect={setSelectedIndex}
             detectedCount={playedPitchClasses.size}
+            a4Hz={detector.config.a4Hz}
           />
           {hasChroma && (
             <div className="mt-4">
