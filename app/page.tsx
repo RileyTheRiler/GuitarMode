@@ -32,6 +32,7 @@ export default function Home() {
 
   const [riffPitchClasses, setRiffPitchClasses] = useState<Set<number> | undefined>(undefined);
   const [riffRoot, setRiffRoot] = useState<number | null>(null);
+  const [riffPlayingPc, setRiffPlayingPc] = useState<number | null>(null);
 
   const handleRiffNotes = useCallback((pcs: Set<number>, root: number | null) => {
     setRiffPitchClasses(pcs);
@@ -271,7 +272,7 @@ export default function Home() {
       </section>
 
       <section className="mb-6">
-        <RiffGenerator onRiffNotes={handleRiffNotes} />
+        <RiffGenerator onRiffNotes={handleRiffNotes} onRiffNoteActive={setRiffPlayingPc} />
       </section>
 
       <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
@@ -294,7 +295,7 @@ export default function Home() {
           playedPitchClasses={playedPitchClasses}
           scalePitchClasses={riffPitchClasses ?? scaleSet}
           rootPitchClass={riffRoot ?? selected?.root ?? null}
-          currentPitchClass={detector.currentNote?.pitchClass ?? null}
+          currentPitchClass={riffPlayingPc ?? detector.currentNote?.pitchClass ?? null}
           boxCenterFret={boxOn ? boxCenterFret : null}
           boxWindow={boxWindow}
           onFretClick={handleFretClick}

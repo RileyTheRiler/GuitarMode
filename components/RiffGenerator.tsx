@@ -1,14 +1,26 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { colorForPitchClass, midiToPitchClass, NOTE_NAMES } from "@/lib/music/notes";
 import { analyzeAudioBuffer, decodeArrayBuffer } from "@/lib/audio/analyzeBuffer";
+import { playPluck } from "@/lib/audio/tonePlayer";
 import type { GenerateRiffRequest, GenerateRiffResponse } from "@/app/api/generate-riff/route";
 
 const KEY_ROOTS = NOTE_NAMES as readonly string[];
 const SECTIONS = ["verse", "chorus", "solo", "bridge"] as const;
-
 type Section = (typeof SECTIONS)[number];
+
+const STORAGE_KEY = "guitarmode:saved-riffs:v1";
+const MAX_SAVED = 10;
+
+type SavedRiff = {
+  id: string;
+  song: string;
+  artist: string;
+  section: string;
+  result: GenerateRiffResponse;
+  savedAt: number;
+};
 
 function noteNameToMidi(name: string): number | null {
   const m = name.match(/^([A-G]#?)(-?\d+)$/);
@@ -23,7 +35,6 @@ function transposeToGuitarRange(notes: string[]): string[] {
   const midis = notes.map(noteNameToMidi).filter((m): m is number => m !== null);
   if (midis.length === 0) return notes;
   const maxMidi = Math.max(...midis);
-  // Guitar range tops out around E5 = MIDI 76; shift down by octaves
   let shift = 0;
   while (maxMidi + shift > 76) shift -= 12;
   while (maxMidi + shift < 40) shift += 12;
@@ -37,11 +48,27 @@ function transposeToGuitarRange(notes: string[]): string[] {
   });
 }
 
+function loadSaved(): SavedRiff[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as SavedRiff[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveToDisk(riffs: SavedRiff[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(riffs));
+  } catch {}
+}
+
 type Props = {
   onRiffNotes: (pitchClasses: Set<number>, root: number | null) => void;
+  onRiffNoteActive: (pitchClass: number | null) => void;
 };
 
-export function RiffGenerator({ onRiffNotes }: Props) {
+export function RiffGenerator({ onRiffNotes, onRiffNoteActive }: Props) {
   const [song, setSong] = useState("");
   const [artist, setArtist] = useState("");
   const [keyRoot, setKeyRoot] = useState("A");
@@ -59,8 +86,59 @@ export function RiffGenerator({ onRiffNotes }: Props) {
   const [humNotes, setHumNotes] = useState<string[]>([]);
   const [humError, setHumError] = useState<string | null>(null);
 
+  const [playingIndex, setPlayingIndex] = useState<number | null>(null);
+  const playTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const [savedRiffs, setSavedRiffs] = useState<SavedRiff[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+
+  useEffect(() => {
+    setSavedRiffs(loadSaved());
+  }, []);
+
+  const stopPlayback = useCallback(() => {
+    playTimersRef.current.forEach(clearTimeout);
+    playTimersRef.current = [];
+    setPlayingIndex(null);
+    onRiffNoteActive(null);
+  }, [onRiffNoteActive]);
+
+  const handlePlayRiff = useCallback(() => {
+    if (!result) return;
+    if (playingIndex !== null) {
+      stopPlayback();
+      return;
+    }
+    const notes = result.riffNotes;
+    const bpmNum = bpm ? parseInt(bpm, 10) : 100;
+    // 8th note duration at the given BPM
+    const noteMs = Math.max(120, Math.round(60000 / (bpmNum * 2)));
+
+    notes.forEach((noteName, i) => {
+      const t = setTimeout(() => {
+        const midi = noteNameToMidi(noteName);
+        if (midi != null) {
+          playPluck(midi);
+          onRiffNoteActive(midiToPitchClass(midi));
+        }
+        setPlayingIndex(i);
+        if (i === notes.length - 1) {
+          const end = setTimeout(() => {
+            setPlayingIndex(null);
+            onRiffNoteActive(null);
+          }, noteMs);
+          playTimersRef.current.push(end);
+        }
+      }, i * noteMs);
+      playTimersRef.current.push(t);
+    });
+  }, [result, bpm, playingIndex, stopPlayback, onRiffNoteActive]);
+
+  // Clean up timers on unmount
+  useEffect(() => () => stopPlayback(), [stopPlayback]);
 
   const handleStartHum = useCallback(async () => {
     setHumError(null);
@@ -85,10 +163,8 @@ export function RiffGenerator({ onRiffNotes }: Props) {
             minClarity: 0.85,
           });
           const raw = res.notes.map((n) => n.noteName);
-          // Deduplicate consecutive repeated notes
           const deduped = raw.filter((n, i) => i === 0 || n !== raw[i - 1]);
-          const transposed = transposeToGuitarRange(deduped);
-          setHumNotes(transposed);
+          setHumNotes(transposeToGuitarRange(deduped));
         } catch (e) {
           setHumError(e instanceof Error ? e.message : "Could not analyze recording");
         } finally {
@@ -114,6 +190,11 @@ export function RiffGenerator({ onRiffNotes }: Props) {
     setApiError(null);
     setLoading(true);
     setResult(null);
+    stopPlayback();
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+
     try {
       const body: GenerateRiffRequest = {
         song,
@@ -128,6 +209,7 @@ export function RiffGenerator({ onRiffNotes }: Props) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        signal: controller.signal,
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Request failed" }));
@@ -136,28 +218,108 @@ export function RiffGenerator({ onRiffNotes }: Props) {
       const data: GenerateRiffResponse = await res.json();
       setResult(data);
 
-      // Light up fretboard with the suggested note pitch classes
       const pcs = new Set<number>();
       for (const note of data.riffNotes) {
         const midi = noteNameToMidi(note);
         if (midi != null) pcs.add(midiToPitchClass(midi));
       }
-      const rootNote = data.riffNotes[0];
-      const rootMidi = rootNote ? noteNameToMidi(rootNote) : null;
-      const rootPc = rootMidi != null ? midiToPitchClass(rootMidi) : null;
-      onRiffNotes(pcs, rootPc);
+      const rootMidi = noteNameToMidi(data.riffNotes[0] ?? "");
+      onRiffNotes(pcs, rootMidi != null ? midiToPitchClass(rootMidi) : null);
+
+      // Save to history
+      const entry: SavedRiff = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        song,
+        artist,
+        section,
+        result: data,
+        savedAt: Date.now(),
+      };
+      setSavedRiffs((prev) => {
+        const next = [entry, ...prev].slice(0, MAX_SAVED);
+        saveToDisk(next);
+        return next;
+      });
     } catch (e) {
-      setApiError(e instanceof Error ? e.message : "Something went wrong");
+      if ((e as Error).name === "AbortError") {
+        setApiError("Request timed out. Try again.");
+      } else {
+        setApiError(e instanceof Error ? e.message : "Something went wrong");
+      }
     } finally {
+      clearTimeout(timeout);
       setLoading(false);
     }
-  }, [song, artist, keyRoot, keyQuality, bpm, chords, section, humNotes, onRiffNotes]);
+  }, [song, artist, keyRoot, keyQuality, bpm, chords, section, humNotes, onRiffNotes, stopPlayback]);
+
+  const loadSavedRiff = useCallback(
+    (saved: SavedRiff) => {
+      setResult(saved.result);
+      stopPlayback();
+      const pcs = new Set<number>();
+      for (const note of saved.result.riffNotes) {
+        const midi = noteNameToMidi(note);
+        if (midi != null) pcs.add(midiToPitchClass(midi));
+      }
+      const rootMidi = noteNameToMidi(saved.result.riffNotes[0] ?? "");
+      onRiffNotes(pcs, rootMidi != null ? midiToPitchClass(rootMidi) : null);
+    },
+    [onRiffNotes, stopPlayback]
+  );
+
+  const deleteSavedRiff = useCallback((id: string) => {
+    setSavedRiffs((prev) => {
+      const next = prev.filter((r) => r.id !== id);
+      saveToDisk(next);
+      return next;
+    });
+  }, []);
 
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:p-4">
-      <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-zinc-400">
-        Riff Generator
-      </h2>
+      <div className="mb-4 flex items-center justify-between">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
+          Riff Generator
+        </h2>
+        {savedRiffs.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowHistory((v) => !v)}
+            className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+          >
+            {showHistory ? "Hide" : "History"} ({savedRiffs.length})
+          </button>
+        )}
+      </div>
+
+      {/* Saved history panel */}
+      {showHistory && savedRiffs.length > 0 && (
+        <div className="mb-4 rounded-lg border border-zinc-700 bg-zinc-800/40 divide-y divide-zinc-700">
+          {savedRiffs.map((r) => (
+            <div key={r.id} className="flex items-center gap-2 px-3 py-2">
+              <button
+                type="button"
+                onClick={() => loadSavedRiff(r)}
+                className="flex-1 text-left"
+              >
+                <span className="text-xs font-medium text-zinc-200">{r.song}</span>
+                <span className="ml-2 text-xs text-zinc-500 capitalize">{r.section}</span>
+                <span className="ml-2 text-xs text-zinc-600">
+                  {r.result.scale}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteSavedRiff(r.id)}
+                className="shrink-0 text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
+                aria-label="Delete"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Song context form */}
       <div className="mb-4 grid gap-3 sm:grid-cols-2">
@@ -248,9 +410,7 @@ export function RiffGenerator({ onRiffNotes }: Props) {
 
       {/* Hum recording */}
       <div className="mb-4 rounded-lg border border-zinc-700 bg-zinc-800/50 p-3">
-        <p className="mb-2 text-xs font-medium text-zinc-300">
-          Hum your idea (optional)
-        </p>
+        <p className="mb-2 text-xs font-medium text-zinc-300">Hum your idea (optional)</p>
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -275,7 +435,9 @@ export function RiffGenerator({ onRiffNotes }: Props) {
           )}
         </div>
         <div className="mt-2 text-xs text-zinc-500">
-          {humRecording && <span className="text-rose-400">● Recording… hum or sing your melody</span>}
+          {humRecording && (
+            <span className="text-rose-400">● Recording… hum or sing your melody</span>
+          )}
           {humAnalyzing && !humRecording && <span>Detecting notes…</span>}
           {humError && <span className="text-rose-400">{humError}</span>}
         </div>
@@ -308,18 +470,29 @@ export function RiffGenerator({ onRiffNotes }: Props) {
         {loading ? "Generating…" : "Generate riff"}
       </button>
 
-      {apiError && (
-        <p className="mb-3 text-xs text-rose-400">{apiError}</p>
-      )}
+      {apiError && <p className="mb-3 text-xs text-rose-400">{apiError}</p>}
 
       {/* Results */}
       {result && (
         <div className="space-y-4 border-t border-zinc-700 pt-4">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400 mb-1">
-              Suggested scale
-            </p>
-            <p className="text-sm text-zinc-200">{result.scale}</p>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400 mb-1">
+                Suggested scale
+              </p>
+              <p className="text-sm text-zinc-200">{result.scale}</p>
+            </div>
+            <button
+              type="button"
+              onClick={handlePlayRiff}
+              className={`shrink-0 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                playingIndex !== null
+                  ? "bg-amber-500 text-zinc-900 hover:bg-amber-400"
+                  : "bg-zinc-700 text-zinc-100 hover:bg-zinc-600"
+              }`}
+            >
+              {playingIndex !== null ? "■ Stop" : "▶ Play riff"}
+            </button>
           </div>
 
           <div>
@@ -337,11 +510,14 @@ export function RiffGenerator({ onRiffNotes }: Props) {
               {result.riffNotes.map((n, i) => {
                 const midi = noteNameToMidi(n);
                 const color = midi != null ? colorForPitchClass(midiToPitchClass(midi)) : "#888";
+                const active = playingIndex === i;
                 return (
                   <span
                     key={i}
-                    className="rounded px-2 py-0.5 text-xs font-mono font-semibold text-zinc-900"
-                    style={{ backgroundColor: color }}
+                    className={`rounded px-2 py-0.5 text-xs font-mono font-semibold text-zinc-900 transition-all ${
+                      active ? "scale-110 ring-2 ring-white/60" : ""
+                    }`}
+                    style={{ backgroundColor: color, opacity: active ? 1 : 0.85 }}
                   >
                     {n}
                   </span>
