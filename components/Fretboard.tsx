@@ -108,6 +108,10 @@ export function Fretboard({
       const cy = stringY(s);
 
       if (onFretClick) {
+        const label =
+          f === 0
+            ? `Open ${STRING_LABELS[s]} string, ${pos.noteName}`
+            : `${STRING_LABELS[s]} string fret ${f}, ${pos.noteName}`;
         hitTargets.push(
           <rect
             key={`hit-${s}-${f}`}
@@ -117,8 +121,12 @@ export function Fretboard({
             height={stringSpacing}
             fill="transparent"
             cursor="pointer"
+            role="button"
+            aria-label={label}
             onClick={() => onFretClick(s, f, pos.midi)}
-          />
+          >
+            <title>{label}</title>
+          </rect>
         );
       }
 
