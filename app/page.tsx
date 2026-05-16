@@ -85,12 +85,18 @@ export default function Home() {
   const tuning = useMemo(() => getTuning(tuningId), [tuningId]);
 
   const [progression, setProgressionState] = useState<ChordEvent[]>([]);
-  const [currentChord, setCurrentChord] = useState<ChordEvent | null>(null);
+  // Two possible sources for the currently-active chord: time-driven from a
+  // loaded waveform, or live-driven from the standalone progression player.
+  // Player wins when it's running so the fretboard tracks the synth.
+  const [waveformChord, setWaveformChord] = useState<ChordEvent | null>(null);
+  const [playbackChord, setPlaybackChord] = useState<ChordEvent | null>(null);
+  const currentChord = playbackChord ?? waveformChord;
 
   const setProgression = useCallback((next: ChordEvent[]) => {
     const sorted = sortProgression(next);
     setProgressionState(sorted);
-    setCurrentChord(null);
+    setWaveformChord(null);
+    setPlaybackChord(null);
   }, []);
 
   const chordInfo = useMemo(() => {
@@ -350,7 +356,7 @@ export default function Home() {
           {lastAudioBuffer && (
             <WaveformPlayer
               audioBuffer={lastAudioBuffer}
-              onTimeUpdate={(t) => setCurrentChord(activeChordAt(progression, t))}
+              onTimeUpdate={(t) => setWaveformChord(activeChordAt(progression, t))}
             />
           )}
         </div>
@@ -403,6 +409,8 @@ export default function Home() {
           progression={progression}
           onChange={setProgression}
           currentChord={currentChord?.chord ?? null}
+          a4Hz={detector.config.a4Hz}
+          onPlaybackChordChange={setPlaybackChord}
         />
       </section>
 

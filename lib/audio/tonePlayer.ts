@@ -52,41 +52,82 @@ export function scheduleClick(time: number, accent = false) {
 export function playPluck(midi: number, a4Hz = 440) {
   const ctx = getContext();
   if (ctx.state === "suspended") ctx.resume().catch(() => {});
-  const now = ctx.currentTime;
+  schedulePluck(midi, ctx.currentTime, 0.9, a4Hz);
+}
+
+export type ScheduledNote = {
+  /** Audio-clock time when the note stops sounding (envelope end + tail). */
+  stopAt: number;
+  /** Fade out and free the nodes now. Idempotent. */
+  cancel: () => void;
+};
+
+/**
+ * Schedule a pluck at an exact audio-clock time. Returns a handle whose
+ * `cancel()` releases the gain quickly and stops the oscillators, so a
+ * progression player can yank everything mid-playback without clicks.
+ */
+export function schedulePluck(
+  midi: number,
+  at: number,
+  durS: number,
+  a4Hz = 440
+): ScheduledNote {
+  const ctx = getContext();
+  if (ctx.state === "suspended") ctx.resume().catch(() => {});
   const fundamental = midiToFreq(midi, a4Hz);
+  const envelope = Math.max(0.3, durS);
+  const stopAt = at + envelope + 0.1;
 
   const master = ctx.createGain();
-  master.gain.setValueAtTime(0, now);
-  master.gain.linearRampToValueAtTime(0.25, now + 0.005);
-  master.gain.exponentialRampToValueAtTime(0.0005, now + 0.9);
+  master.gain.setValueAtTime(0, at);
+  master.gain.linearRampToValueAtTime(0.22, at + 0.008);
+  master.gain.exponentialRampToValueAtTime(0.0005, at + envelope);
 
   const filter = ctx.createBiquadFilter();
   filter.type = "lowpass";
-  filter.frequency.setValueAtTime(fundamental * 8, now);
-  filter.frequency.exponentialRampToValueAtTime(fundamental * 2, now + 0.9);
+  filter.frequency.setValueAtTime(fundamental * 8, at);
+  filter.frequency.exponentialRampToValueAtTime(fundamental * 2, at + envelope);
   filter.Q.value = 1;
 
-  const oscillators: OscillatorNode[] = [];
+  const oscs: OscillatorNode[] = [];
   for (const detune of [-6, 6]) {
     const osc = ctx.createOscillator();
     osc.type = "triangle";
     osc.frequency.value = fundamental;
     osc.detune.value = detune;
     osc.connect(filter);
-    osc.start(now);
-    osc.stop(now + 1.0);
-    oscillators.push(osc);
+    osc.start(at);
+    osc.stop(stopAt);
+    oscs.push(osc);
   }
 
   filter.connect(master);
   master.connect(ctx.destination);
 
-  // Disconnect after the last oscillator finishes, so the cleanup tracks the
-  // actual envelope end rather than a magic timeout.
-  oscillators[oscillators.length - 1].onended = () => {
+  oscs[oscs.length - 1].onended = () => {
     try {
       master.disconnect();
       filter.disconnect();
     } catch {}
+  };
+
+  let cancelled = false;
+  return {
+    stopAt,
+    cancel: () => {
+      if (cancelled) return;
+      cancelled = true;
+      const now = ctx.currentTime;
+      try {
+        master.gain.cancelScheduledValues(now);
+        // Snap to current value then fade out so the abort doesn't click.
+        master.gain.setValueAtTime(master.gain.value, now);
+        master.gain.linearRampToValueAtTime(0.0001, now + 0.04);
+      } catch {}
+      for (const o of oscs) {
+        try { o.stop(now + 0.05); } catch {}
+      }
+    },
   };
 }
