@@ -8,6 +8,9 @@ type Props = {
 };
 
 const CANVAS_H = 64;
+// Don't let A and B collapse onto the same sample — Web Audio silently
+// drops the loop if loopEnd <= loopStart.
+const MIN_LOOP_S = 0.05;
 
 function drawWaveform(canvas: HTMLCanvasElement, buffer: AudioBuffer) {
   const ctx = canvas.getContext("2d");
@@ -51,7 +54,21 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
 
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [loopA, setLoopA] = useState<number | null>(null);
+  const [loopB, setLoopB] = useState<number | null>(null);
+  const [loopOn, setLoopOn] = useState(false);
   const duration = audioBuffer.duration;
+
+  const loopActive =
+    loopOn && loopA != null && loopB != null && loopB - loopA >= MIN_LOOP_S;
+  // Mirror into refs so the running tick / source-config reads the latest values
+  // without us needing to recreate the source on every state change.
+  const loopARef = useRef<number | null>(loopA);
+  const loopBRef = useRef<number | null>(loopB);
+  const loopActiveRef = useRef(loopActive);
+  loopARef.current = loopA;
+  loopBRef.current = loopB;
+  loopActiveRef.current = loopActive;
 
   // Draw waveform whenever buffer changes
   useEffect(() => {
@@ -65,6 +82,13 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
     canvas.width = canvas.offsetWidth || 400;
     drawWaveform(canvas, audioBuffer);
     return () => ro.disconnect();
+  }, [audioBuffer]);
+
+  // Drop stale markers if a new (shorter) buffer comes in.
+  useEffect(() => {
+    if (loopA != null && loopA > duration) setLoopA(null);
+    if (loopB != null && loopB > duration) setLoopB(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audioBuffer]);
 
   const stopSource = useCallback(() => {
@@ -92,16 +116,31 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
     }
     const audioCtx = ctxRef.current;
 
+    // When looping, snap the start position into [A, B] so the AudioBufferSourceNode
+    // doesn't have to seek past loopEnd before wrapping.
+    if (loopActiveRef.current) {
+      const a = loopARef.current!;
+      const b = loopBRef.current!;
+      if (startOffsetRef.current < a || startOffsetRef.current >= b) {
+        startOffsetRef.current = a;
+      }
+    }
+
     const src = audioCtx.createBufferSource();
     src.buffer = audioBuffer;
     src.connect(audioCtx.destination);
+    if (loopActiveRef.current) {
+      src.loop = true;
+      src.loopStart = loopARef.current!;
+      src.loopEnd = loopBRef.current!;
+    }
     src.start(0, startOffsetRef.current);
     src.onended = () => {
       if (sourceRef.current !== src) return;
       sourceRef.current = null;
       cancelAnimationFrame(rafRef.current);
-      // Natural end: leave playhead at the end so users see where playback finished.
-      // An explicit Stop resets via handleStop.
+      // Natural end (only fires when not looping): leave playhead at the end so
+      // users see where playback finished. An explicit Stop resets via handleStop.
       startOffsetRef.current = duration;
       setPlaying(false);
       setProgress(1);
@@ -113,8 +152,18 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
 
     const tick = () => {
       const elapsed = (performance.now() - startAtRef.current) / 1000;
-      setProgress(Math.min(elapsed / duration, 1));
-      onTimeUpdate?.(Math.min(elapsed, duration));
+      const rawPos = startOffsetRef.current + elapsed;
+      let pos: number;
+      if (loopActiveRef.current) {
+        const a = loopARef.current!;
+        const b = loopBRef.current!;
+        const len = b - a;
+        pos = rawPos < b ? rawPos : a + ((rawPos - a) % len);
+      } else {
+        pos = Math.min(rawPos, duration);
+      }
+      setProgress(pos / duration);
+      onTimeUpdate?.(pos);
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
@@ -122,16 +171,48 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
 
   const handlePlay = useCallback(() => {
     if (playing) {
+      // Compute & store playhead position so resume picks up where pause left off.
       const elapsed = (performance.now() - startAtRef.current) / 1000;
-      startOffsetRef.current = Math.min(startOffsetRef.current + elapsed, duration);
+      const rawPos = startOffsetRef.current + elapsed;
+      let pausePos = Math.min(rawPos, duration);
+      if (loopActiveRef.current) {
+        const a = loopARef.current!;
+        const b = loopBRef.current!;
+        const len = b - a;
+        pausePos = rawPos < b ? rawPos : a + ((rawPos - a) % len);
+      }
+      startOffsetRef.current = pausePos;
       stopSource();
       setPlaying(false);
       return;
     }
-    // If the previous play ran to completion, restart from the beginning.
     if (startOffsetRef.current >= duration) startOffsetRef.current = 0;
     startPlayback();
   }, [duration, playing, stopSource, startPlayback]);
+
+  // Compute the current visible playhead time without state, for "Set A/B".
+  const currentPlayheadSeconds = useCallback(() => {
+    if (!playing) return startOffsetRef.current;
+    const elapsed = (performance.now() - startAtRef.current) / 1000;
+    const rawPos = startOffsetRef.current + elapsed;
+    if (loopActiveRef.current) {
+      const a = loopARef.current!;
+      const b = loopBRef.current!;
+      const len = b - a;
+      return rawPos < b ? rawPos : a + ((rawPos - a) % len);
+    }
+    return Math.min(rawPos, duration);
+  }, [playing, duration]);
+
+  // Apply A/B/loopOn changes to a running source by restarting at the current
+  // playhead. Re-run on every change to those refs.
+  const restartIfPlaying = useCallback(() => {
+    if (!playing) return;
+    const pos = currentPlayheadSeconds();
+    startOffsetRef.current = pos;
+    stopSource();
+    startPlayback();
+  }, [playing, currentPlayheadSeconds, stopSource, startPlayback]);
 
   // Click on waveform to seek
   const handleSeek = useCallback(
@@ -140,8 +221,9 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
       const fraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-      startOffsetRef.current = fraction * duration;
-      onTimeUpdate?.(fraction * duration);
+      const target = fraction * duration;
+      startOffsetRef.current = target;
+      onTimeUpdate?.(target);
       if (playing) {
         stopSource();
         startPlayback();
@@ -152,6 +234,36 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
     [duration, playing, stopSource, startPlayback, onTimeUpdate]
   );
 
+  const handleSetA = useCallback(() => {
+    const t = currentPlayheadSeconds();
+    setLoopA(t);
+    // Keep A < B; if B is now invalid, drop it.
+    if (loopB != null && loopB - t < MIN_LOOP_S) setLoopB(null);
+  }, [currentPlayheadSeconds, loopB]);
+
+  const handleSetB = useCallback(() => {
+    const t = currentPlayheadSeconds();
+    if (loopA != null && t - loopA < MIN_LOOP_S) return;
+    setLoopB(t);
+  }, [currentPlayheadSeconds, loopA]);
+
+  const handleClearLoop = useCallback(() => {
+    setLoopA(null);
+    setLoopB(null);
+    setLoopOn(false);
+  }, []);
+
+  const handleToggleLoop = useCallback(() => {
+    setLoopOn((v) => !v);
+  }, []);
+
+  // After the user changes loop settings while playing, restart so the source
+  // picks up the new loop config. Effect runs after refs have been updated.
+  useEffect(() => {
+    restartIfPlaying();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loopA, loopB, loopOn]);
+
   useEffect(() => {
     return () => {
       stopSource();
@@ -160,6 +272,10 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
       });
     };
   }, [stopSource]);
+
+  const aFrac = loopA != null ? loopA / duration : null;
+  const bFrac = loopB != null ? loopB / duration : null;
+  const loopReady = loopA != null && loopB != null && loopB - loopA >= MIN_LOOP_S;
 
   return (
     <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-950 p-3">
@@ -174,13 +290,49 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
           style={{ height: CANVAS_H }}
           onClick={handleSeek}
         />
+        {/* Loop region shading */}
+        {aFrac != null && bFrac != null && bFrac > aFrac && (
+          <div
+            className={`absolute top-0 bottom-0 pointer-events-none ${
+              loopActive ? "bg-amber-400/15" : "bg-amber-400/5"
+            }`}
+            style={{
+              left: `${aFrac * 100}%`,
+              width: `${(bFrac - aFrac) * 100}%`,
+            }}
+          />
+        )}
+        {/* A marker */}
+        {aFrac != null && (
+          <div
+            className="absolute top-0 bottom-0 w-px bg-amber-300 pointer-events-none"
+            style={{ left: `${aFrac * 100}%` }}
+            aria-hidden="true"
+          >
+            <span className="absolute -top-3 -translate-x-1/2 text-[9px] font-semibold text-amber-300">
+              A
+            </span>
+          </div>
+        )}
+        {/* B marker */}
+        {bFrac != null && (
+          <div
+            className="absolute top-0 bottom-0 w-px bg-amber-300 pointer-events-none"
+            style={{ left: `${bFrac * 100}%` }}
+            aria-hidden="true"
+          >
+            <span className="absolute -top-3 -translate-x-1/2 text-[9px] font-semibold text-amber-300">
+              B
+            </span>
+          </div>
+        )}
         {/* Playhead */}
         <div
           className="absolute top-0 bottom-0 w-px bg-amber-400 pointer-events-none"
           style={{ left: `${progress * 100}%` }}
         />
       </div>
-      <div className="mt-2 flex items-center gap-3">
+      <div className="mt-2 flex flex-wrap items-center gap-2 gap-y-1.5">
         <button
           onClick={handlePlay}
           className="rounded px-3 py-1 text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-100 transition-colors"
@@ -196,6 +348,55 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
         <span className="text-xs text-zinc-500 tabular-nums">
           {(progress * duration).toFixed(1)}s / {duration.toFixed(1)}s
         </span>
+        <div className="ml-auto flex flex-wrap items-center gap-1.5">
+          <button
+            onClick={handleSetA}
+            className="rounded px-2 py-1 text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+            title="Set loop start at the current playhead"
+          >
+            Set A
+            {loopA != null && (
+              <span className="ml-1 text-amber-300 tabular-nums">
+                {loopA.toFixed(1)}s
+              </span>
+            )}
+          </button>
+          <button
+            onClick={handleSetB}
+            disabled={loopA == null}
+            className="rounded px-2 py-1 text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            title="Set loop end at the current playhead (must be after A)"
+          >
+            Set B
+            {loopB != null && (
+              <span className="ml-1 text-amber-300 tabular-nums">
+                {loopB.toFixed(1)}s
+              </span>
+            )}
+          </button>
+          <button
+            onClick={handleToggleLoop}
+            disabled={!loopReady}
+            aria-pressed={loopActive}
+            className={`rounded px-2 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+              loopActive
+                ? "bg-emerald-500 text-zinc-950 hover:bg-emerald-400"
+                : "bg-zinc-800 hover:bg-zinc-700 text-zinc-200"
+            }`}
+            title={loopReady ? "Loop between A and B" : "Set A and B first"}
+          >
+            Loop
+          </button>
+          {(loopA != null || loopB != null) && (
+            <button
+              onClick={handleClearLoop}
+              className="rounded px-2 py-1 text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-400 transition-colors"
+              title="Clear A/B markers"
+            >
+              Clear
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
