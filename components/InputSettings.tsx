@@ -2,6 +2,7 @@
 
 import type { PitchDetectorConfig } from "@/lib/audio/usePitchDetector";
 import type { MicDevice } from "@/lib/audio/useMicStream";
+import { TUNINGS } from "@/lib/guitar/tunings";
 
 type Props = {
   config: PitchDetectorConfig;
@@ -10,6 +11,8 @@ type Props = {
   currentDeviceId: string | null;
   onDeviceChange: (id: string) => void;
   micOn: boolean;
+  tuningId: string;
+  onTuningChange: (id: string) => void;
 };
 
 export function InputSettings({
@@ -19,6 +22,8 @@ export function InputSettings({
   currentDeviceId,
   onDeviceChange,
   micOn,
+  tuningId,
+  onTuningChange,
 }: Props) {
   return (
     <details className="group rounded-lg border border-zinc-800 bg-zinc-900/60">
@@ -45,6 +50,21 @@ export function InputSettings({
               Turn on the mic to see device names.
             </span>
           )}
+        </label>
+
+        <label className="flex flex-col gap-1 text-xs text-zinc-400">
+          Tuning
+          <select
+            className="rounded bg-zinc-800 px-2 py-1 text-sm text-zinc-100"
+            value={tuningId}
+            onChange={(e) => onTuningChange(e.target.value)}
+          >
+            {TUNINGS.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
         </label>
 
         <label className="flex flex-col gap-1 text-xs text-zinc-400">

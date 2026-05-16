@@ -2,11 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { tunerReading, type TuningReading } from "@/lib/music/tuner";
+import { type Tuning } from "@/lib/guitar/tunings";
 
 type Props = {
   micOn: boolean;
   frequency: number | null;
   a4Hz: number;
+  tuning: Tuning;
 };
 
 // Hold the last reading on screen briefly after the note decays so users
@@ -24,18 +26,19 @@ function colorForCents(cents: number): string {
   return "#ef4444"; // red
 }
 
-export function Tuner({ micOn, frequency, a4Hz }: Props) {
+export function Tuner({ micOn, frequency, a4Hz, tuning }: Props) {
   const [held, setHeld] = useState<TuningReading | null>(null);
   const expireTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const r = frequency != null ? tunerReading(frequency, a4Hz) : null;
+    const r =
+      frequency != null ? tunerReading(frequency, a4Hz, tuning.midi) : null;
     if (r) {
       setHeld(r);
       if (expireTimerRef.current) clearTimeout(expireTimerRef.current);
       expireTimerRef.current = setTimeout(() => setHeld(null), HOLD_MS);
     }
-  }, [frequency, a4Hz]);
+  }, [frequency, a4Hz, tuning]);
 
   useEffect(() => {
     return () => {
@@ -64,7 +67,7 @@ export function Tuner({ micOn, frequency, a4Hz }: Props) {
         <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
           Tuner
         </h2>
-        <span className="text-xs text-zinc-500">Standard tuning (EADGBE)</span>
+        <span className="text-xs text-zinc-500">{tuning.name}</span>
       </div>
 
       <div className="flex flex-col items-center gap-3">

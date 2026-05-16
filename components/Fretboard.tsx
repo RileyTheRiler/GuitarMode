@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { colorForPitchClass, pitchClassName } from "@/lib/music/notes";
-import { STANDARD_TUNING, STRING_LABELS, getNoteAt } from "@/lib/guitar/fretboard";
+import {
+  STANDARD_TUNING,
+  getNoteAt,
+  stringLabelsFor,
+} from "@/lib/guitar/fretboard";
 
 type Props = {
   numFrets?: number;
@@ -16,6 +20,7 @@ type Props = {
   chordFifthPitchClass?: number | null;
   boxCenterFret?: number | null;
   boxWindow?: number;
+  tuning?: number[];
   onFretClick?: (stringIndex: number, fret: number, midi: number) => void;
 };
 
@@ -49,10 +54,12 @@ export function Fretboard({
   chordFifthPitchClass,
   boxCenterFret,
   boxWindow = 5,
+  tuning = STANDARD_TUNING,
   onFretClick,
 }: Props) {
   const chordActive = !!chordPitchClasses && chordPitchClasses.size > 0;
-  const numStrings = STANDARD_TUNING.length;
+  const numStrings = tuning.length;
+  const stringLabels = useMemo(() => stringLabelsFor(tuning), [tuning]);
   const compact = useCompactFretboard();
   const nutWidth = compact ? 8 : 10;
   const leftPad = compact ? 30 : 44;
@@ -88,7 +95,7 @@ export function Fretboard({
   const hitTargets: React.ReactNode[] = [];
   for (let s = 0; s < numStrings; s++) {
     for (let f = 0; f <= numFrets; f++) {
-      const pos = getNoteAt(s, f);
+      const pos = getNoteAt(s, f, tuning);
       const isPlayed = playedPitchClasses.has(pos.pitchClass);
       const isInScale = scalePitchClasses?.has(pos.pitchClass) ?? false;
       const isRoot = rootPitchClass != null && pos.pitchClass === rootPitchClass;
@@ -110,8 +117,8 @@ export function Fretboard({
       if (onFretClick) {
         const label =
           f === 0
-            ? `Open ${STRING_LABELS[s]} string, ${pos.noteName}`
-            : `${STRING_LABELS[s]} string fret ${f}, ${pos.noteName}`;
+            ? `Open ${stringLabels[s]} string, ${pos.noteName}`
+            : `${stringLabels[s]} string fret ${f}, ${pos.noteName}`;
         hitTargets.push(
           <rect
             key={`hit-${s}-${f}`}
@@ -292,7 +299,7 @@ export function Fretboard({
             fill="#e5e5e5"
             textAnchor="middle"
           >
-            {STRING_LABELS[s]}
+            {stringLabels[s]}
           </text>
         ))}
 

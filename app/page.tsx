@@ -26,8 +26,10 @@ import {
   type ChordEvent,
 } from "@/lib/music/progression";
 import { chordPitchClasses, parseChord } from "@/lib/music/chords";
+import { DEFAULT_TUNING_ID, getTuning } from "@/lib/guitar/tunings";
 
 const NUM_FRETS = 22;
+const TUNING_STORAGE_KEY = "guitarmode:tuning:v1";
 
 export default function Home() {
   const mic = useMicStream();
@@ -56,6 +58,31 @@ export default function Home() {
   const [boxOn, setBoxOn] = useState(false);
   const [boxCenterFret, setBoxCenterFret] = useState(7);
   const [boxWindow, setBoxWindow] = useState(5);
+
+  const [tuningId, setTuningId] = useState<string>(DEFAULT_TUNING_ID);
+  const tuningHydratedRef = useRef(false);
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      tuningHydratedRef.current = true;
+      return;
+    }
+    try {
+      const saved = window.localStorage.getItem(TUNING_STORAGE_KEY);
+      if (saved) setTuningId(saved);
+    } catch {
+      /* ignore */
+    }
+    tuningHydratedRef.current = true;
+  }, []);
+  useEffect(() => {
+    if (!tuningHydratedRef.current || typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(TUNING_STORAGE_KEY, tuningId);
+    } catch {
+      /* ignore */
+    }
+  }, [tuningId]);
+  const tuning = useMemo(() => getTuning(tuningId), [tuningId]);
 
   const [progression, setProgressionState] = useState<ChordEvent[]>([]);
   const [currentChord, setCurrentChord] = useState<ChordEvent | null>(null);
@@ -286,6 +313,7 @@ export default function Home() {
           micOn={detector.active}
           frequency={detector.currentNote?.frequency ?? null}
           a4Hz={detector.config.a4Hz}
+          tuning={tuning}
         />
       </section>
 
@@ -297,6 +325,8 @@ export default function Home() {
           currentDeviceId={mic.currentDeviceId}
           onDeviceChange={handleDeviceChange}
           micOn={detector.active}
+          tuningId={tuningId}
+          onTuningChange={setTuningId}
         />
       </section>
 
@@ -393,6 +423,7 @@ export default function Home() {
         </div>
         <Fretboard
           numFrets={NUM_FRETS}
+          tuning={tuning.midi}
           playedPitchClasses={playedPitchClasses}
           scalePitchClasses={scaleSet}
           rootPitchClass={selected?.root ?? null}

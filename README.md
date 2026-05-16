@@ -39,7 +39,7 @@ No env vars, no config needed. Vercel's HTTPS is required for microphone access.
 
 - **Monophonic only.** `pitchy` is a monophonic detector; chords won't resolve cleanly. Use single-note lines.
 - **Clean tone works best.** Heavy distortion and palm-muting confuse YIN.
-- **Standard tuning (EADGBE) only** in this release. The tuning is a constant in `lib/guitar/fretboard.ts` and is structured so alternate tunings can be added later.
+- **Tunings.** Standard, Drop D, half-step down, full-step down, Open G, and DADGAD ship out of the box (see `lib/guitar/tunings.ts`). The fretboard, scale matcher, and built-in tuner all follow the selected tuning.
 
 ## Project layout
 

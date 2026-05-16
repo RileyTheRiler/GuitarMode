@@ -4,7 +4,9 @@ import {
   allPositions,
   getNoteAt,
   positionsForPitchClass,
+  stringLabelsFor,
 } from "./fretboard";
+import { TUNINGS, getTuning } from "./tunings";
 
 describe("getNoteAt", () => {
   it("returns open low E (string 0, fret 0)", () => {
@@ -62,5 +64,67 @@ describe("positionsForPitchClass", () => {
     const onLowE = cs.find((p) => p.stringIndex === 0 && p.fret === 8);
     expect(onA?.midi).toBe(48);
     expect(onLowE?.midi).toBe(48);
+  });
+});
+
+describe("alternate tunings", () => {
+  it("Drop D lowers the low string to D2 (MIDI 38)", () => {
+    const dropD = getTuning("drop-d");
+    const open = getNoteAt(0, 0, dropD.midi);
+    expect(open.midi).toBe(38);
+    expect(open.noteName).toBe("D2");
+  });
+
+  it("DADGAD's 12th fret on every string equals open + 12", () => {
+    const dadgad = getTuning("dadgad");
+    for (let s = 0; s < dadgad.midi.length; s++) {
+      expect(getNoteAt(s, 12, dadgad.midi).midi).toBe(dadgad.midi[s] + 12);
+    }
+  });
+
+  it("positionsForPitchClass honors the active tuning", () => {
+    const dropD = getTuning("drop-d");
+    const ds = positionsForPitchClass(2, 12, dropD.midi); // D
+    const openLow = ds.find((p) => p.stringIndex === 0 && p.fret === 0);
+    expect(openLow).toBeDefined();
+    expect(openLow?.midi).toBe(38);
+  });
+});
+
+describe("stringLabelsFor", () => {
+  it("preserves the conventional E A D G B e for standard tuning", () => {
+    expect(stringLabelsFor(STANDARD_TUNING)).toEqual([
+      "E",
+      "A",
+      "D",
+      "G",
+      "B",
+      "e",
+    ]);
+  });
+
+  it("derives labels from pitch class for non-standard tunings", () => {
+    expect(stringLabelsFor(getTuning("drop-d").midi)).toEqual([
+      "D",
+      "A",
+      "D",
+      "G",
+      "B",
+      "E",
+    ]);
+    expect(stringLabelsFor(getTuning("dadgad").midi)).toEqual([
+      "D",
+      "A",
+      "D",
+      "G",
+      "A",
+      "D",
+    ]);
+  });
+
+  it("returns 6 labels for every built-in tuning", () => {
+    for (const t of TUNINGS) {
+      expect(stringLabelsFor(t.midi).length).toBe(6);
+    }
   });
 });
