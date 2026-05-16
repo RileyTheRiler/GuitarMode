@@ -1,6 +1,6 @@
 "use client";
 
-import type { PitchDetectorConfig } from "@/lib/audio/usePitchDetector";
+import { DEFAULT_CONFIG, type PitchDetectorConfig } from "@/lib/audio/usePitchDetector";
 import type { MicDevice } from "@/lib/audio/useMicStream";
 import { TUNINGS } from "@/lib/guitar/tunings";
 
@@ -139,6 +139,16 @@ export function InputSettings({
           />
           Polyphonic mode (chord/chroma detection) &mdash; experimental
         </label>
+
+        <div className="sm:col-span-2 flex justify-end">
+          <button
+            type="button"
+            onClick={() => onChange(DEFAULT_CONFIG)}
+            className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-200"
+          >
+            Reset detection settings
+          </button>
+        </div>
       </div>
     </details>
   );

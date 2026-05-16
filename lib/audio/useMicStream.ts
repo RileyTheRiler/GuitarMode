@@ -9,6 +9,31 @@ export type MicDevice = {
   label: string;
 };
 
+/**
+ * Translate the raw getUserMedia rejection into something a user can act on.
+ * The native browser messages (e.g. "Permission denied") don't tell the user
+ * what to do; we map the DOMException name to a remediation hint.
+ */
+function describeMicError(e: unknown): string {
+  if (e instanceof DOMException) {
+    switch (e.name) {
+      case "NotAllowedError":
+      case "SecurityError":
+        return "Microphone access denied. Grant the permission in your browser's site settings, then try again.";
+      case "NotFoundError":
+      case "OverconstrainedError":
+        return "No microphone found. Connect one and try again.";
+      case "NotReadableError":
+        return "Microphone is already in use by another app. Close other apps that may be using it.";
+      case "AbortError":
+        return "Microphone request was cancelled. Try again.";
+      default:
+        return e.message || "Could not access the microphone.";
+    }
+  }
+  return e instanceof Error ? e.message : "Could not access the microphone.";
+}
+
 export function useMicStream() {
   const [state, setState] = useState<MicState>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -66,8 +91,7 @@ export function useMicStream() {
         refreshDevices();
         return stream;
       } catch (e) {
-        const msg = e instanceof Error ? e.message : "Microphone access denied";
-        setError(msg);
+        setError(describeMicError(e));
         setState("error");
         throw e;
       }
