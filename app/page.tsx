@@ -10,6 +10,7 @@ import { InputSettings } from "@/components/InputSettings";
 import { Timeline } from "@/components/Timeline";
 import { ChromaChart } from "@/components/ChromaChart";
 import { WaveformPlayer } from "@/components/WaveformPlayer";
+import { RiffGenerator } from "@/components/RiffGenerator";
 import { useMicStream } from "@/lib/audio/useMicStream";
 import { usePitchDetector, type DetectedNote } from "@/lib/audio/usePitchDetector";
 import { analyzeAudioBuffer, decodeArrayBuffer } from "@/lib/audio/analyzeBuffer";
@@ -28,6 +29,14 @@ export default function Home() {
   const [fileError, setFileError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [lastAudioBuffer, setLastAudioBuffer] = useState<AudioBuffer | null>(null);
+
+  const [riffPitchClasses, setRiffPitchClasses] = useState<Set<number> | undefined>(undefined);
+  const [riffRoot, setRiffRoot] = useState<number | null>(null);
+
+  const handleRiffNotes = useCallback((pcs: Set<number>, root: number | null) => {
+    setRiffPitchClasses(pcs);
+    setRiffRoot(root);
+  }, []);
 
   const [boxOn, setBoxOn] = useState(false);
   const [boxCenterFret, setBoxCenterFret] = useState(7);
@@ -261,6 +270,10 @@ export default function Home() {
         <Timeline notes={detector.notes} />
       </section>
 
+      <section className="mb-6">
+        <RiffGenerator onRiffNotes={handleRiffNotes} />
+      </section>
+
       <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
@@ -279,15 +292,15 @@ export default function Home() {
         <Fretboard
           numFrets={NUM_FRETS}
           playedPitchClasses={playedPitchClasses}
-          scalePitchClasses={scaleSet}
-          rootPitchClass={selected?.root ?? null}
+          scalePitchClasses={riffPitchClasses ?? scaleSet}
+          rootPitchClass={riffRoot ?? selected?.root ?? null}
           currentPitchClass={detector.currentNote?.pitchClass ?? null}
           boxCenterFret={boxOn ? boxCenterFret : null}
           boxWindow={boxWindow}
           onFretClick={handleFretClick}
         />
         <p className="mt-3 text-xs text-zinc-500">
-          Solid circles = notes you played. Outlined circles = other notes in the selected scale.
+          Solid circles = notes you played. Outlined circles = other notes in the selected scale or riff.
           Pulsing = currently playing. Click any fret to audition it.
         </p>
       </section>
