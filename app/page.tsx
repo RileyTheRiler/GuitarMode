@@ -13,6 +13,7 @@ import { WaveformPlayer } from "@/components/WaveformPlayer";
 import { ProgressionEditor } from "@/components/ProgressionEditor";
 import { Metronome } from "@/components/Metronome";
 import { TimbreVisualizer } from "@/components/TimbreVisualizer";
+import { Tuner } from "@/components/Tuner";
 import { useMicStream } from "@/lib/audio/useMicStream";
 import { usePitchDetector, type DetectedNote } from "@/lib/audio/usePitchDetector";
 import { analyzeAudioBuffer, decodeArrayBuffer } from "@/lib/audio/analyzeBuffer";
@@ -277,6 +278,14 @@ export default function Home() {
           analyzing={analyzing}
           level={detector.level}
           error={appError}
+        />
+      </section>
+
+      <section className="mb-4 sm:mb-6">
+        <Tuner
+          micOn={detector.active}
+          frequency={detector.currentNote?.frequency ?? null}
+          a4Hz={detector.config.a4Hz}
         />
       </section>
 
