@@ -48,6 +48,7 @@ export const DEFAULT_CONFIG: PitchDetectorConfig = {
 };
 
 const STORAGE_KEY = "guitarmode:detector-config:v1";
+const SESSION_STORAGE_KEY = "guitarmode:session:v1";
 
 const FRAME_SIZE = 2048;
 const HOP_SIZE = 1024;
@@ -175,6 +176,54 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
       console.warn("usePitchDetector: failed to persist config", err);
     }
   }, [config]);
+
+  // Restore detected notes and chroma from the previous session so a refresh
+  // doesn't wipe a practice session. A bounded session protects localStorage
+  // from runaway growth on very long sessions.
+  const sessionHydratedRef = useRef(false);
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      sessionHydratedRef.current = true;
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as {
+          notes?: DetectedNote[];
+          chromaProfile?: number[];
+        };
+        if (Array.isArray(parsed.notes) && parsed.notes.length > 0) {
+          setNotes(parsed.notes);
+        }
+        if (Array.isArray(parsed.chromaProfile) && parsed.chromaProfile.length === 12) {
+          setChromaProfile(parsed.chromaProfile);
+          chromaAccumRef.current = parsed.chromaProfile.slice();
+        }
+      }
+    } catch (err) {
+      console.warn("usePitchDetector: failed to read session", err);
+    }
+    sessionHydratedRef.current = true;
+  }, []);
+
+  // Persist on change, debounced — bursty pluck sessions would otherwise
+  // hammer localStorage. Bound the stored note count so storage stays small.
+  useEffect(() => {
+    if (!sessionHydratedRef.current || typeof window === "undefined") return;
+    const handle = setTimeout(() => {
+      try {
+        const trimmed = notes.length > 1000 ? notes.slice(-1000) : notes;
+        window.localStorage.setItem(
+          SESSION_STORAGE_KEY,
+          JSON.stringify({ notes: trimmed, chromaProfile })
+        );
+      } catch (err) {
+        console.warn("usePitchDetector: failed to persist session", err);
+      }
+    }, 500);
+    return () => clearTimeout(handle);
+  }, [notes, chromaProfile]);
 
   const finalizeActive = useCallback((endTime: number) => {
     const midi = activeMidiRef.current;
@@ -509,6 +558,9 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
     calibSamplesRef.current = [];
     adaptiveMinRmsRef.current = null;
     prevFrameRef.current = null;
+    if (typeof window !== "undefined") {
+      try { window.localStorage.removeItem(SESSION_STORAGE_KEY); } catch {}
+    }
   }, []);
 
   const addNotes = useCallback((more: DetectedNote[]) => {

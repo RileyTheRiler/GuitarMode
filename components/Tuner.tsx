@@ -9,6 +9,8 @@ type Props = {
   frequency: number | null;
   a4Hz: number;
   tuning: Tuning;
+  /** Per-string cents trim, applied to each open-string target before snap. */
+  tuningOffsetsCents?: number[];
 };
 
 // Hold the last reading on screen briefly after the note decays so users
@@ -26,19 +28,27 @@ function colorForCents(cents: number): string {
   return "#ef4444"; // red
 }
 
-export function Tuner({ micOn, frequency, a4Hz, tuning }: Props) {
+export function Tuner({
+  micOn,
+  frequency,
+  a4Hz,
+  tuning,
+  tuningOffsetsCents,
+}: Props) {
   const [held, setHeld] = useState<TuningReading | null>(null);
   const expireTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const r =
-      frequency != null ? tunerReading(frequency, a4Hz, tuning.midi) : null;
+    const targets = tuning.midi.map(
+      (m, i) => m + (tuningOffsetsCents?.[i] ?? 0) / 100
+    );
+    const r = frequency != null ? tunerReading(frequency, a4Hz, targets) : null;
     if (r) {
       setHeld(r);
       if (expireTimerRef.current) clearTimeout(expireTimerRef.current);
       expireTimerRef.current = setTimeout(() => setHeld(null), HOLD_MS);
     }
-  }, [frequency, a4Hz, tuning]);
+  }, [frequency, a4Hz, tuning, tuningOffsetsCents]);
 
   useEffect(() => {
     return () => {

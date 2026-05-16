@@ -63,4 +63,14 @@ describe("tunerReading", () => {
     // 432 Hz against A=432 reads as MIDI 69 detected, target 64, so 500 cents sharp of E4.
     expect(r!.cents).toBeCloseTo(500, 4);
   });
+
+  it("accepts fractional MIDI targets (per-string cents trim)", () => {
+    // Pull the low E target +5¢ above MIDI 40, so a perfectly-MIDI-40 freq
+    // reads 5¢ flat of its trimmed target.
+    const e2 = 440 * Math.pow(2, (40 - 69) / 12);
+    const targets = [40.05, 45, 50, 55, 59, 64];
+    const r = tunerReading(e2, 440, targets);
+    expect(r!.targetMidi).toBeCloseTo(40.05, 6);
+    expect(r!.cents).toBeCloseTo(-5, 4);
+  });
 });

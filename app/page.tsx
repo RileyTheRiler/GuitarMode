@@ -30,6 +30,8 @@ import { DEFAULT_TUNING_ID, getTuning } from "@/lib/guitar/tunings";
 
 const NUM_FRETS = 22;
 const TUNING_STORAGE_KEY = "guitarmode:tuning:v1";
+const TUNING_OFFSETS_STORAGE_KEY = "guitarmode:tuning-offsets:v1";
+const EMPTY_OFFSETS: number[] = [0, 0, 0, 0, 0, 0];
 
 export default function Home() {
   const mic = useMicStream();
@@ -83,6 +85,50 @@ export default function Home() {
     }
   }, [tuningId]);
   const tuning = useMemo(() => getTuning(tuningId), [tuningId]);
+
+  const [tuningOffsets, setTuningOffsets] = useState<number[]>(EMPTY_OFFSETS);
+  const offsetsHydratedRef = useRef(false);
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      offsetsHydratedRef.current = true;
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(TUNING_OFFSETS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as unknown;
+        if (
+          Array.isArray(parsed) &&
+          parsed.length === 6 &&
+          parsed.every((n) => typeof n === "number" && Number.isFinite(n))
+        ) {
+          setTuningOffsets(parsed as number[]);
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    offsetsHydratedRef.current = true;
+  }, []);
+  useEffect(() => {
+    if (!offsetsHydratedRef.current || typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        TUNING_OFFSETS_STORAGE_KEY,
+        JSON.stringify(tuningOffsets)
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [tuningOffsets]);
+  const setOffsetAt = useCallback((i: number, cents: number) => {
+    setTuningOffsets((prev) => {
+      const next = prev.slice();
+      next[i] = Math.max(-50, Math.min(50, cents));
+      return next;
+    });
+  }, []);
+  const resetOffsets = useCallback(() => setTuningOffsets(EMPTY_OFFSETS), []);
 
   const [progression, setProgressionState] = useState<ChordEvent[]>([]);
   // Two possible sources for the currently-active chord: time-driven from a
@@ -320,6 +366,7 @@ export default function Home() {
           frequency={detector.currentNote?.frequency ?? null}
           a4Hz={detector.config.a4Hz}
           tuning={tuning}
+          tuningOffsetsCents={tuningOffsets}
         />
       </section>
 
@@ -333,6 +380,10 @@ export default function Home() {
           micOn={detector.active}
           tuningId={tuningId}
           onTuningChange={setTuningId}
+          tuning={tuning}
+          tuningOffsetsCents={tuningOffsets}
+          onTuningOffsetChange={setOffsetAt}
+          onResetTuningOffsets={resetOffsets}
         />
       </section>
 

@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { stretchOLA } from "@/lib/audio/timeStretch";
 
 type Props = {
   audioBuffer: AudioBuffer;
@@ -11,6 +12,8 @@ const CANVAS_H = 64;
 // Don't let A and B collapse onto the same sample — Web Audio silently
 // drops the loop if loopEnd <= loopStart.
 const MIN_LOOP_S = 0.05;
+// Available playback speeds. Pitch-preserving (OLA), so safe for practice.
+const RATE_OPTIONS = [0.5, 0.75, 1.0, 1.25, 1.5] as const;
 
 function drawWaveform(canvas: HTMLCanvasElement, buffer: AudioBuffer) {
   const ctx = canvas.getContext("2d");
@@ -57,7 +60,18 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
   const [loopA, setLoopA] = useState<number | null>(null);
   const [loopB, setLoopB] = useState<number | null>(null);
   const [loopOn, setLoopOn] = useState(false);
+  const [rate, setRate] = useState<number>(1);
   const duration = audioBuffer.duration;
+
+  // Pitch-preserving stretched buffer for non-1 rates. Recomputes on
+  // buffer or rate change; for the typical 5–30 s clip the OLA pass
+  // takes well under 100 ms, so we keep it synchronous.
+  const playBuffer = useMemo(
+    () => (rate === 1 ? audioBuffer : stretchOLA(audioBuffer, rate)),
+    [audioBuffer, rate]
+  );
+  const rateRef = useRef(rate);
+  rateRef.current = rate;
 
   const loopActive =
     loopOn && loopA != null && loopB != null && loopB - loopA >= MIN_LOOP_S;
@@ -126,15 +140,18 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
       }
     }
 
+    const r = rateRef.current;
     const src = audioCtx.createBufferSource();
-    src.buffer = audioBuffer;
+    src.buffer = playBuffer;
     src.connect(audioCtx.destination);
     if (loopActiveRef.current) {
+      // Source positions are in stretched-buffer time, but A/B are stored in
+      // original time. Convert at the boundary.
       src.loop = true;
-      src.loopStart = loopARef.current!;
-      src.loopEnd = loopBRef.current!;
+      src.loopStart = loopARef.current! / r;
+      src.loopEnd = loopBRef.current! / r;
     }
-    src.start(0, startOffsetRef.current);
+    src.start(0, startOffsetRef.current / r);
     src.onended = () => {
       if (sourceRef.current !== src) return;
       sourceRef.current = null;
@@ -147,12 +164,15 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
       onTimeUpdate?.(duration);
     };
     sourceRef.current = src;
-    startAtRef.current = performance.now() - startOffsetRef.current * 1000;
+    startAtRef.current = performance.now();
     setPlaying(true);
 
     const tick = () => {
       const elapsed = (performance.now() - startAtRef.current) / 1000;
-      const rawPos = startOffsetRef.current + elapsed;
+      // elapsed is wallclock seconds; original time advances at `rate × wallclock`
+      // because the stretched buffer plays at its own sample rate.
+      const rNow = rateRef.current;
+      const rawPos = startOffsetRef.current + elapsed * rNow;
       let pos: number;
       if (loopActiveRef.current) {
         const a = loopARef.current!;
@@ -167,13 +187,14 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
-  }, [audioBuffer, duration, onTimeUpdate]);
+  }, [playBuffer, duration, onTimeUpdate]);
 
   const handlePlay = useCallback(() => {
     if (playing) {
-      // Compute & store playhead position so resume picks up where pause left off.
+      // Compute & store playhead position (original time) so resume picks up
+      // where pause left off.
       const elapsed = (performance.now() - startAtRef.current) / 1000;
-      const rawPos = startOffsetRef.current + elapsed;
+      const rawPos = startOffsetRef.current + elapsed * rateRef.current;
       let pausePos = Math.min(rawPos, duration);
       if (loopActiveRef.current) {
         const a = loopARef.current!;
@@ -190,11 +211,11 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
     startPlayback();
   }, [duration, playing, stopSource, startPlayback]);
 
-  // Compute the current visible playhead time without state, for "Set A/B".
+  // Compute the current visible playhead time (original time), for "Set A/B".
   const currentPlayheadSeconds = useCallback(() => {
     if (!playing) return startOffsetRef.current;
     const elapsed = (performance.now() - startAtRef.current) / 1000;
-    const rawPos = startOffsetRef.current + elapsed;
+    const rawPos = startOffsetRef.current + elapsed * rateRef.current;
     if (loopActiveRef.current) {
       const a = loopARef.current!;
       const b = loopBRef.current!;
@@ -257,12 +278,12 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
     setLoopOn((v) => !v);
   }, []);
 
-  // After the user changes loop settings while playing, restart so the source
-  // picks up the new loop config. Effect runs after refs have been updated.
+  // After the user changes loop / rate settings while playing, restart so
+  // the source picks up the new config or stretched buffer.
   useEffect(() => {
     restartIfPlaying();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loopA, loopB, loopOn]);
+  }, [loopA, loopB, loopOn, rate, playBuffer]);
 
   useEffect(() => {
     return () => {
@@ -348,6 +369,21 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
         <span className="text-xs text-zinc-500 tabular-nums">
           {(progress * duration).toFixed(1)}s / {duration.toFixed(1)}s
         </span>
+        <label className="flex items-center gap-1 text-xs text-zinc-400">
+          Speed
+          <select
+            value={rate}
+            onChange={(e) => setRate(Number(e.target.value))}
+            aria-label="Playback speed (pitch preserved)"
+            className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-100"
+          >
+            {RATE_OPTIONS.map((r) => (
+              <option key={r} value={r}>
+                {r}x
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
           <button
             onClick={handleSetA}
