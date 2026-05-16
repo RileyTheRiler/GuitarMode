@@ -13,9 +13,13 @@ class FrameProducer extends AudioWorkletProcessor {
     const opts = (options && options.processorOptions) || {};
     this.frameSize = opts.frameSize || 2048;
     this.hopSize = opts.hopSize || this.frameSize / 2;
-    this.buffer = new Float32Array(this.frameSize);
+    if (this.hopSize <= 0 || this.hopSize > this.frameSize) {
+      throw new Error("hopSize must be in (0, frameSize]");
+    }
+    // Linear buffer: append-then-slide-by-hop. Sized to absorb a typical
+    // render quantum (128 samples) on top of one full frame.
+    this.buffer = new Float32Array(this.frameSize + 256);
     this.fill = 0;
-    this.sinceLastHop = 0;
   }
 
   process(inputs) {
@@ -24,25 +28,23 @@ class FrameProducer extends AudioWorkletProcessor {
     const input = channels[0];
     if (!input) return true;
 
-    for (let i = 0; i < input.length; i++) {
-      if (this.fill < this.frameSize) {
-        this.buffer[this.fill++] = input[i];
-        continue;
-      }
-      // Buffer is full; shift by one hop each time we've accumulated hopSize
-      // new samples, then copy in.
-      // Slide the buffer left by one sample and append a new one at the end.
-      // For hopSize=1024, fftSize=2048 this effectively keeps a rolling frame.
-      this.buffer.copyWithin(0, 1);
-      this.buffer[this.frameSize - 1] = input[i];
-      this.sinceLastHop++;
-      if (this.sinceLastHop >= this.hopSize) {
-        this.sinceLastHop = 0;
-        // Transfer a copy so the main thread owns a fresh buffer.
-        const out = new Float32Array(this.frameSize);
-        out.set(this.buffer);
-        this.port.postMessage({ frame: out }, [out.buffer]);
-      }
+    // Grow if a render quantum is larger than reserved headroom.
+    if (this.fill + input.length > this.buffer.length) {
+      const next = new Float32Array(this.fill + input.length + 256);
+      next.set(this.buffer.subarray(0, this.fill));
+      this.buffer = next;
+    }
+    this.buffer.set(input, this.fill);
+    this.fill += input.length;
+
+    // Emit one frame per accumulated hop. Slide by hopSize after each emit
+    // so the next frame overlaps by (frameSize - hopSize) samples.
+    while (this.fill >= this.frameSize) {
+      const out = new Float32Array(this.frameSize);
+      out.set(this.buffer.subarray(0, this.frameSize));
+      this.port.postMessage({ frame: out }, [out.buffer]);
+      this.buffer.copyWithin(0, this.hopSize, this.fill);
+      this.fill -= this.hopSize;
     }
     return true;
   }

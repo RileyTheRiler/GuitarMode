@@ -185,13 +185,27 @@ export default function Home() {
     };
     try {
       const stream = mic.streamRef.current ?? (await mic.start(mic.currentDeviceId));
-      const recorder = new MediaRecorder(stream);
+      // Pick a MIME the browser actually supports — Safari can't record webm.
+      // Reuse the chosen type for the Blob so decoding doesn't see a mismatch.
+      const candidates = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/mp4",
+        "audio/ogg",
+      ];
+      const mimeType = candidates.find(
+        (m) => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m)
+      );
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+      const blobType = recorder.mimeType || mimeType || "audio/webm";
       recordedChunksRef.current = [];
       recorder.ondataavailable = (ev) => {
         if (ev.data.size > 0) recordedChunksRef.current.push(ev.data);
       };
       recorder.onstop = async () => {
-        const blob = new Blob(recordedChunksRef.current, { type: "audio/webm" });
+        const blob = new Blob(recordedChunksRef.current, { type: blobType });
         recordedChunksRef.current = [];
         if (mountedRef.current) setAnalyzing(true);
         try {
