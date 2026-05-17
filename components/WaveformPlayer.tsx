@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 type Props = {
   audioBuffer: AudioBuffer;
-  onTimeUpdate?: (seconds: number) => void;
 };
 
 const CANVAS_H = 64;
@@ -41,7 +40,7 @@ function drawWaveform(canvas: HTMLCanvasElement, buffer: AudioBuffer) {
   ctx.stroke();
 }
 
-export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
+export function WaveformPlayer({ audioBuffer }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sourceRef = useRef<AudioBufferSourceNode | null>(null);
   const ctxRef = useRef<AudioContext | null>(null);
@@ -79,10 +78,17 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
     startOffsetRef.current = 0;
     setPlaying(false);
     setProgress(0);
-    onTimeUpdate?.(0);
-  }, [stopSource, onTimeUpdate]);
+  }, [stopSource]);
 
-  const startPlayback = useCallback(() => {
+  const handlePlay = useCallback(() => {
+    if (playing) {
+      const elapsed = (performance.now() - startAtRef.current) / 1000;
+      startOffsetRef.current = Math.min(startOffsetRef.current + elapsed, duration);
+      stopSource();
+      setPlaying(false);
+      return;
+    }
+
     const AudioCtx =
       window.AudioContext ||
       (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -96,13 +102,13 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
     src.connect(audioCtx.destination);
     src.start(0, startOffsetRef.current);
     src.onended = () => {
-      if (sourceRef.current !== src) return;
-      sourceRef.current = null;
-      cancelAnimationFrame(rafRef.current);
-      startOffsetRef.current = duration;
-      setPlaying(false);
-      setProgress(1);
-      onTimeUpdate?.(duration);
+      if (sourceRef.current === src) {
+        startOffsetRef.current = 0;
+        setPlaying(false);
+        setProgress(0);
+        sourceRef.current = null;
+        cancelAnimationFrame(rafRef.current);
+      }
     };
     sourceRef.current = src;
     startAtRef.current = performance.now() - startOffsetRef.current * 1000;
@@ -111,55 +117,40 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
     const tick = () => {
       const elapsed = (performance.now() - startAtRef.current) / 1000;
       setProgress(Math.min(elapsed / duration, 1));
-      onTimeUpdate?.(Math.min(elapsed, duration));
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
-  }, [audioBuffer, duration, onTimeUpdate]);
-
-  const handlePlay = useCallback(() => {
-    if (playing) {
-      const elapsed = (performance.now() - startAtRef.current) / 1000;
-      startOffsetRef.current = Math.min(startOffsetRef.current + elapsed, duration);
-      stopSource();
-      setPlaying(false);
-      return;
-    }
-    if (startOffsetRef.current >= duration) startOffsetRef.current = 0;
-    startPlayback();
-  }, [duration, playing, stopSource, startPlayback]);
+  }, [audioBuffer, duration, playing, stopSource]);
 
   const handleSeek = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
-      const fraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const fraction = (e.clientX - rect.left) / rect.width;
       startOffsetRef.current = fraction * duration;
-      onTimeUpdate?.(fraction * duration);
       if (playing) {
         stopSource();
-        startPlayback();
+        setPlaying(false);
+        setTimeout(() => handlePlay(), 0);
       } else {
         setProgress(fraction);
       }
     },
-    [duration, playing, stopSource, startPlayback, onTimeUpdate]
+    [duration, handlePlay, playing, stopSource]
   );
 
   useEffect(() => {
     return () => {
       stopSource();
-      ctxRef.current?.close().catch((err) => {
-        console.warn("WaveformPlayer: AudioContext close failed", err);
-      });
+      ctxRef.current?.close().catch(() => {});
     };
   }, [stopSource]);
 
   return (
     <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-950 p-3">
       <p className="mb-2 text-xs text-zinc-500">
-        Recording · {duration.toFixed(1)} s — click waveform to seek
+        Recording &middot; {duration.toFixed(1)} s &mdash; click waveform to seek
       </p>
       <div className="relative">
         <canvas
