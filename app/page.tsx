@@ -29,6 +29,9 @@ import {
 import { chordPitchClasses, parseChord } from "@/lib/music/chords";
 import { TUNING_PRESETS, STANDARD_TUNING_PRESET, type TuningPreset } from "@/lib/guitar/tunings";
 import { downloadMidi } from "@/lib/export/midi";
+import { diatonicTriads } from "@/lib/music/diatonicChords";
+import { DiatonicChords } from "@/components/DiatonicChords";
+import { TunerDisplay } from "@/components/TunerDisplay";
 
 const NUM_FRETS = 22;
 const TUNING_STORAGE_KEY = "guitarmode:tuning:v1";
@@ -45,6 +48,7 @@ export default function Home() {
 
   const [tuning, setTuningState] = useState<TuningPreset>(STANDARD_TUNING_PRESET);
   const [highContrast, setHighContrastState] = useState(false);
+  const [showDegrees, setShowDegrees] = useState(false);
 
   // Persist tuning and high-contrast selections
   useEffect(() => {
@@ -259,6 +263,22 @@ export default function Home() {
     [selected]
   );
 
+  const DEGREE_NAMES = ["1","♭2","2","♭3","3","4","♯4","5","♭6","6","♭7","7"];
+  const degreeMap = useMemo(() => {
+    if (!selected) return undefined;
+    const map = new Map<number, string>();
+    for (const interval of selected.template.intervals) {
+      const pc = (selected.root + interval) % 12;
+      map.set(pc, DEGREE_NAMES[interval] ?? String(interval));
+    }
+    return map;
+  }, [selected]);
+
+  const diatonicChordList = useMemo(
+    () => (selected ? diatonicTriads(selected.template, selected.root) : []),
+    [selected]
+  );
+
   const handleFretClick = useCallback(
     (_s: number, _f: number, midi: number) => {
       playPluck(midi, detector.config.a4Hz);
@@ -315,6 +335,15 @@ export default function Home() {
         />
       </section>
 
+      {detector.currentNote && (
+        <section className="mb-4 sm:mb-6">
+          <TunerDisplay
+            frequency={detector.currentNote.frequency}
+            a4Hz={detector.config.a4Hz}
+          />
+        </section>
+      )}
+
       <section className="mb-4 sm:mb-6">
         <InputSettings
           config={detector.config}
@@ -367,6 +396,17 @@ export default function Home() {
           {detector.notes.length >= 2 && (
             <ChordSuggestions matches={chordMatches} />
           )}
+          {diatonicChordList.length > 0 && (
+            <div className="mt-4">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                Diatonic chords
+              </h3>
+              <DiatonicChords
+                triads={diatonicChordList}
+                scaleName={`${selected!.rootName} ${selected!.templateName}`}
+              />
+            </div>
+          )}
           {hasChroma && (
             <div className="mt-4">
               <ChromaChart chroma={detector.chromaProfile} />
@@ -414,21 +454,40 @@ export default function Home() {
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
             Fretboard
           </h2>
-          <FretboardControls
-            boxOn={boxOn}
-            boxCenterFret={boxCenterFret}
-            boxWindow={boxWindow}
-            onBoxOnChange={setBoxOn}
-            onCenterChange={setBoxCenterFret}
-            onWindowChange={setBoxWindow}
-            numFrets={NUM_FRETS}
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <FretboardControls
+              boxOn={boxOn}
+              boxCenterFret={boxCenterFret}
+              boxWindow={boxWindow}
+              onBoxOnChange={setBoxOn}
+              onCenterChange={setBoxCenterFret}
+              onWindowChange={setBoxWindow}
+              numFrets={NUM_FRETS}
+            />
+            {selected && (
+              <button
+                type="button"
+                onClick={() => setShowDegrees((v) => !v)}
+                aria-pressed={showDegrees}
+                title="Toggle between note names and scale degrees"
+                className={`rounded-md px-2 py-1 text-xs font-medium transition ${
+                  showDegrees
+                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                    : "bg-zinc-800 text-zinc-300 border border-zinc-700 hover:border-zinc-500"
+                }`}
+              >
+                {showDegrees ? "Degrees" : "Notes"}
+              </button>
+            )}
+          </div>
         </div>
         <Fretboard
           numFrets={NUM_FRETS}
           tuning={tuning.midi}
           stringLabels={tuning.stringLabels}
           highContrast={highContrast}
+          showDegrees={showDegrees}
+          degreeMap={degreeMap}
           playedPitchClasses={playedPitchClasses}
           scalePitchClasses={scaleSet}
           rootPitchClass={selected?.root ?? null}

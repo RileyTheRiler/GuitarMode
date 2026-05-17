@@ -9,6 +9,8 @@ type Props = {
   tuning?: number[];
   stringLabels?: string[];
   highContrast?: boolean;
+  showDegrees?: boolean;
+  degreeMap?: Map<number, string>;
   playedPitchClasses: Set<number>;
   scalePitchClasses?: Set<number>;
   rootPitchClass?: number | null;
@@ -59,6 +61,8 @@ export function Fretboard({
   tuning = STANDARD_TUNING,
   stringLabels,
   highContrast = false,
+  showDegrees = false,
+  degreeMap,
   playedPitchClasses,
   scalePitchClasses,
   rootPitchClass,
@@ -284,7 +288,9 @@ export function Fretboard({
             fontWeight={isChordRoot || isRoot ? 700 : 500}
             fill={isPlayed || isLive || isChordTone ? "#0a0a0a" : color}
           >
-            {pitchClassName(pos.pitchClass)}
+            {showDegrees && degreeMap?.has(pos.pitchClass)
+              ? degreeMap.get(pos.pitchClass)
+              : pitchClassName(pos.pitchClass)}
           </text>
         </g>
       );

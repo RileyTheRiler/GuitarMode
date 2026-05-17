@@ -143,6 +143,23 @@ export function useMetronome() {
     else start();
   }, [start, stop]);
 
+  const tapTimesRef = useRef<number[]>([]);
+  const tap = useCallback(() => {
+    const now = Date.now();
+    // Drop taps older than 3 seconds.
+    tapTimesRef.current = tapTimesRef.current.filter((t) => now - t < 3000);
+    tapTimesRef.current.push(now);
+    if (tapTimesRef.current.length >= 2) {
+      const times = tapTimesRef.current;
+      let totalInterval = 0;
+      for (let i = 1; i < times.length; i++) totalInterval += times[i] - times[i - 1];
+      const avgInterval = totalInterval / (times.length - 1);
+      setBpmState(clampBpm(Math.round(60000 / avgInterval)));
+    }
+    // Keep only last 8 taps.
+    if (tapTimesRef.current.length > 8) tapTimesRef.current.shift();
+  }, []);
+
   const setBpm = useCallback((next: number) => setBpmState(clampBpm(next)), []);
   const setBeatsPerBar = useCallback(
     (next: number) => setBeatsPerBarState(clampBeats(next)),
@@ -168,5 +185,6 @@ export function useMetronome() {
     setBpm,
     setBeatsPerBar,
     setClickStyle,
+    tap,
   };
 }

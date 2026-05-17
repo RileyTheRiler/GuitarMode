@@ -51,6 +51,15 @@ export function Metronome() {
           {m.playing ? "Stop" : "Start"}
         </button>
 
+        <button
+          type="button"
+          onClick={m.tap}
+          title="Tap to set BPM — tap at least twice"
+          className="rounded-md bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-100 transition hover:bg-zinc-700 active:scale-95"
+        >
+          Tap
+        </button>
+
         <label className="flex items-center gap-2 text-xs text-zinc-400">
           BPM
           <input
