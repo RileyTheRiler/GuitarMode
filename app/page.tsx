@@ -30,6 +30,7 @@ import { chordPitchClasses, parseChord } from "@/lib/music/chords";
 import { TUNING_PRESETS, STANDARD_TUNING_PRESET, type TuningPreset } from "@/lib/guitar/tunings";
 import { downloadMidi } from "@/lib/export/midi";
 import { diatonicTriads } from "@/lib/music/diatonicChords";
+import { findVoicings, type Voicing } from "@/lib/guitar/chordVoicings";
 import { DiatonicChords } from "@/components/DiatonicChords";
 import { TunerDisplay } from "@/components/TunerDisplay";
 
@@ -49,6 +50,9 @@ export default function Home() {
   const [tuning, setTuningState] = useState<TuningPreset>(STANDARD_TUNING_PRESET);
   const [highContrast, setHighContrastState] = useState(false);
   const [showDegrees, setShowDegrees] = useState(false);
+  const [capoFret, setCapoFretState] = useState(0);
+  const [selectedDiatonicDegree, setSelectedDiatonicDegree] = useState<number | null>(null);
+  const [activeVoicing, setActiveVoicing] = useState<Voicing | null>(null);
 
   // Persist tuning and high-contrast selections
   useEffect(() => {
@@ -60,6 +64,8 @@ export default function Home() {
       }
       const hc = window.localStorage.getItem("guitarmode:high-contrast:v1");
       if (hc === "1") setHighContrastState(true);
+      const capo = window.localStorage.getItem("guitarmode:capo:v1");
+      if (capo) setCapoFretState(Math.max(0, Math.min(12, Number(capo) || 0)));
     } catch {}
   }, []);
 
@@ -71,6 +77,15 @@ export default function Home() {
   const handleHighContrastChange = useCallback((v: boolean) => {
     setHighContrastState(v);
     try { window.localStorage.setItem("guitarmode:high-contrast:v1", v ? "1" : "0"); } catch {}
+  }, []);
+
+  const handleCapoChange = useCallback((n: number) => {
+    setCapoFretState(n);
+    try { window.localStorage.setItem("guitarmode:capo:v1", String(n)); } catch {}
+  }, []);
+
+  const handleDiatonicSelect = useCallback((degree: number) => {
+    setSelectedDiatonicDegree((prev) => (prev === degree ? null : degree));
   }, []);
 
   // Mirror mic errors into appError so the most recent error wins over a stale one.
@@ -279,6 +294,17 @@ export default function Home() {
     [selected]
   );
 
+  useEffect(() => {
+    if (selectedDiatonicDegree == null) {
+      setActiveVoicing(null);
+      return;
+    }
+    const triad = diatonicChordList[selectedDiatonicDegree];
+    if (!triad) { setActiveVoicing(null); return; }
+    const voicings = findVoicings(triad.root, triad.quality, tuning.midi);
+    setActiveVoicing(voicings[0] ?? null);
+  }, [selectedDiatonicDegree, diatonicChordList, tuning.midi]);
+
   const handleFretClick = useCallback(
     (_s: number, _f: number, midi: number) => {
       playPluck(midi, detector.config.a4Hz);
@@ -404,6 +430,8 @@ export default function Home() {
               <DiatonicChords
                 triads={diatonicChordList}
                 scaleName={`${selected!.rootName} ${selected!.templateName}`}
+                selectedDegree={selectedDiatonicDegree}
+                onSelect={handleDiatonicSelect}
               />
             </div>
           )}
@@ -463,6 +491,8 @@ export default function Home() {
               onCenterChange={setBoxCenterFret}
               onWindowChange={setBoxWindow}
               numFrets={NUM_FRETS}
+              capo={capoFret}
+              onCapoChange={handleCapoChange}
             />
             {selected && (
               <button
@@ -488,6 +518,8 @@ export default function Home() {
           highContrast={highContrast}
           showDegrees={showDegrees}
           degreeMap={degreeMap}
+          capo={capoFret}
+          voicingPositions={activeVoicing ?? undefined}
           playedPitchClasses={playedPitchClasses}
           scalePitchClasses={scaleSet}
           rootPitchClass={selected?.root ?? null}

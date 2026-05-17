@@ -11,6 +11,8 @@ type Props = {
   highContrast?: boolean;
   showDegrees?: boolean;
   degreeMap?: Map<number, string>;
+  capo?: number;
+  voicingPositions?: { stringIndex: number; fret: number }[];
   playedPitchClasses: Set<number>;
   scalePitchClasses?: Set<number>;
   rootPitchClass?: number | null;
@@ -63,6 +65,8 @@ export function Fretboard({
   highContrast = false,
   showDegrees = false,
   degreeMap,
+  capo = 0,
+  voicingPositions,
   playedPitchClasses,
   scalePitchClasses,
   rootPitchClass,
@@ -142,10 +146,18 @@ export function Fretboard({
     setFocusedPos({ s, f });
   };
 
+  // Build a Set for fast voicing position lookup
+  const voicingSet = voicingPositions
+    ? new Set(voicingPositions.map((v) => `${v.stringIndex}:${v.fret}`))
+    : null;
+
   const circles: React.ReactNode[] = [];
   const hitTargets: React.ReactNode[] = [];
   for (let s = 0; s < numStrings; s++) {
     for (let f = 0; f <= numFrets; f++) {
+      // Hide frets that are physically behind the capo
+      if (capo > 0 && f < capo) continue;
+
       const pos = getNoteAt(s, f, tuning);
       const isPlayed = playedPitchClasses.has(pos.pitchClass);
       const isInScale = scalePitchClasses?.has(pos.pitchClass) ?? false;
@@ -157,9 +169,10 @@ export function Fretboard({
       const isChordThird =
         chordActive && chordThirdPitchClass != null && pos.pitchClass === chordThirdPitchClass;
       const isFocused = focusedPos?.s === s && focusedPos?.f === f;
+      const isVoicing = voicingSet?.has(`${s}:${f}`) ?? false;
       // Chord tones override the box focus so they stay visible outside the window.
       const visible =
-        (inBox(f) && (isPlayed || isInScale || isLive)) || isChordTone;
+        (inBox(f) && (isPlayed || isInScale || isLive)) || isChordTone || isVoicing;
 
       const cx = fretX(f);
       const cy = stringY(s);
@@ -280,6 +293,20 @@ export function Fretboard({
               pointerEvents="none"
             />
           )}
+          {/* Voicing ring — dashed white ring marks specific chord fingering position */}
+          {isVoicing && (
+            <circle
+              cx={cx}
+              cy={cy}
+              r={r + 5}
+              fill="none"
+              stroke="#ffffff"
+              strokeWidth={2}
+              strokeDasharray="3 2"
+              opacity={0.9}
+              pointerEvents="none"
+            />
+          )}
           <text
             x={cx}
             y={cy + 3.5}
@@ -389,6 +416,20 @@ export function Fretboard({
             strokeWidth={f === 0 ? 6 : 2}
           />
         ))}
+
+        {/* Capo bar */}
+        {capo > 0 && (
+          <rect
+            x={fretLineX(capo) - 4}
+            y={topPad - 12}
+            width={8}
+            height={boardHeight + 24}
+            rx={3}
+            fill="#d4a843"
+            opacity={0.9}
+            aria-label={`Capo at fret ${capo}`}
+          />
+        )}
 
         {Array.from({ length: numStrings }, (_, s) => (
           <line
