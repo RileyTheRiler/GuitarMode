@@ -1,13 +1,16 @@
 "use client";
 
+import { useState } from "react";
 import { colorForPitchClass } from "@/lib/music/notes";
 import type { ChordMatch } from "@/lib/music/detectChord";
 
 type Props = {
   matches: ChordMatch[];
+  onSnap?: () => void;
+  snapped?: boolean;
 };
 
-export function ChordSuggestions({ matches }: Props) {
+export function ChordSuggestions({ matches, onSnap, snapped }: Props) {
   if (matches.length === 0) return null;
 
   const top = matches.slice(0, 4);
@@ -15,9 +18,25 @@ export function ChordSuggestions({ matches }: Props) {
 
   return (
     <div className="mt-4">
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
-        Chord detection
-      </h3>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+          Chord detection
+        </h3>
+        {onSnap && (
+          <button
+            type="button"
+            onClick={onSnap}
+            title="Snap: freeze the current chord reading"
+            className={`rounded px-2 py-0.5 text-[10px] font-medium transition ${
+              snapped
+                ? "bg-sky-500/20 text-sky-300 border border-sky-500/40"
+                : "bg-zinc-800 text-zinc-400 border border-zinc-700 hover:border-zinc-500 hover:text-zinc-200"
+            }`}
+          >
+            {snapped ? "Snapped" : "Snap"}
+          </button>
+        )}
+      </div>
       <div className="flex flex-wrap gap-2">
         {top.map((m) => {
           const pct = Math.round(m.confidence * 100);
@@ -43,6 +62,11 @@ export function ChordSuggestions({ matches }: Props) {
           );
         })}
       </div>
+      {snapped && (
+        <p className="mt-1.5 text-[10px] text-zinc-500">
+          Frozen at this moment — keep playing to update live detection above.
+        </p>
+      )}
     </div>
   );
 }

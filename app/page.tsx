@@ -7,6 +7,7 @@ import { FretboardControls } from "@/components/FretboardControls";
 import { DetectedNotes } from "@/components/DetectedNotes";
 import { ScaleSuggestions } from "@/components/ScaleSuggestions";
 import { ChordSuggestions } from "@/components/ChordSuggestions";
+import { SessionManager, type SavedSession } from "@/components/SessionManager";
 import { InputSettings } from "@/components/InputSettings";
 import { Timeline } from "@/components/Timeline";
 import { ChromaChart } from "@/components/ChromaChart";
@@ -18,7 +19,7 @@ import { useMicStream } from "@/lib/audio/useMicStream";
 import { usePitchDetector, type DetectedNote } from "@/lib/audio/usePitchDetector";
 import { analyzeAudioBuffer, decodeArrayBuffer } from "@/lib/audio/analyzeBuffer";
 import { detectScales } from "@/lib/music/detectScale";
-import { detectChords } from "@/lib/music/detectChord";
+import { detectChords, type ChordMatch } from "@/lib/music/detectChord";
 import { buildProfile, profilePitchClassSet } from "@/lib/music/profile";
 import { playPluck } from "@/lib/audio/tonePlayer";
 import {
@@ -53,6 +54,7 @@ export default function Home() {
   const [capoFret, setCapoFretState] = useState(0);
   const [selectedDiatonicDegree, setSelectedDiatonicDegree] = useState<number | null>(null);
   const [activeVoicing, setActiveVoicing] = useState<Voicing | null>(null);
+  const [snappedChordMatches, setSnappedChordMatches] = useState<ChordMatch[] | null>(null);
 
   // Persist tuning and high-contrast selections
   useEffect(() => {
@@ -273,6 +275,19 @@ export default function Home() {
     downloadMidi(detector.notes);
   }, [detector.notes]);
 
+  const handleSnapChord = useCallback(() => {
+    setSnappedChordMatches((prev) => (prev ? null : chordMatches));
+  }, [chordMatches]);
+
+  const handleRestoreSession = useCallback((session: SavedSession) => {
+    detector.reset();
+    detector.addNotes(session.notes);
+    if (session.chromaProfile.some((v) => v > 0)) detector.addChroma(session.chromaProfile);
+    setSnappedChordMatches(null);
+    setSelectedDiatonicDegree(null);
+    setActiveVoicing(null);
+  }, [detector]);
+
   const scaleSet = useMemo(
     () => (selected ? new Set(selected.scale) : undefined),
     [selected]
@@ -361,6 +376,14 @@ export default function Home() {
         />
       </section>
 
+      <section className="mb-4 sm:mb-6">
+        <SessionManager
+          notes={detector.notes}
+          chromaProfile={detector.chromaProfile}
+          onRestore={handleRestoreSession}
+        />
+      </section>
+
       {detector.currentNote && (
         <section className="mb-4 sm:mb-6">
           <TunerDisplay
@@ -420,7 +443,11 @@ export default function Home() {
             detectedCount={playedPitchClasses.size}
           />
           {detector.notes.length >= 2 && (
-            <ChordSuggestions matches={chordMatches} />
+            <ChordSuggestions
+              matches={snappedChordMatches ?? chordMatches}
+              onSnap={handleSnapChord}
+              snapped={snappedChordMatches !== null}
+            />
           )}
           {diatonicChordList.length > 0 && (
             <div className="mt-4">
