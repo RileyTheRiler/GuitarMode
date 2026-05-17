@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { colorForPitchClass, pitchClassName } from "@/lib/music/notes";
 import { STANDARD_TUNING, getNoteAt } from "@/lib/guitar/fretboard";
 
@@ -8,6 +8,7 @@ type Props = {
   numFrets?: number;
   tuning?: number[];
   stringLabels?: string[];
+  highContrast?: boolean;
   playedPitchClasses: Set<number>;
   scalePitchClasses?: Set<number>;
   rootPitchClass?: number | null;
@@ -24,8 +25,9 @@ type Props = {
 const DOUBLE_MARKERS = new Set([12, 24]);
 const SINGLE_MARKERS = new Set([3, 5, 7, 9, 15, 17, 19, 21]);
 
-// Tailwind sm breakpoint = 640px. Below that, switch to compact sizing so the
-// full fretboard is readable on phones instead of requiring heavy scrolling.
+// Pattern ID per pitch-class group (3 patterns, 4 pitch classes each).
+const HC_PATTERN = (pc: number) => ["hc-stripe", "hc-dot", "hc-cross"][pc % 3];
+
 function useCompactFretboard() {
   const [compact, setCompact] = useState(false);
   useEffect(() => {
@@ -56,6 +58,7 @@ export function Fretboard({
   numFrets = 22,
   tuning = STANDARD_TUNING,
   stringLabels,
+  highContrast = false,
   playedPitchClasses,
   scalePitchClasses,
   rootPitchClass,
@@ -73,6 +76,7 @@ export function Fretboard({
   const compact = useCompactFretboard();
   const reducedMotion = useReducedMotion();
   const displayLabels = stringLabels ?? tuning.map((_, i) => ["E", "A", "D", "G", "B", "e"][i] ?? String(i + 1));
+
   const nutWidth = compact ? 8 : 10;
   const leftPad = compact ? 30 : 44;
   const rightPad = compact ? 10 : 16;
@@ -103,6 +107,37 @@ export function Fretboard({
     return fret >= boxCenterFret - boxWindow && fret <= boxCenterFret + boxWindow;
   };
 
+  // Keyboard navigation state
+  const [focusedPos, setFocusedPos] = useState<{ s: number; f: number } | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+
+  const handleSvgFocus = () => {
+    if (!focusedPos) setFocusedPos({ s: 0, f: 0 });
+  };
+
+  const handleSvgBlur = () => setFocusedPos(null);
+
+  const handleKeyDown = (e: React.KeyboardEvent<SVGSVGElement>) => {
+    if (!focusedPos) return;
+    let { s, f } = focusedPos;
+    switch (e.key) {
+      case "ArrowRight": e.preventDefault(); f = Math.min(numFrets, f + 1); break;
+      case "ArrowLeft":  e.preventDefault(); f = Math.max(0, f - 1); break;
+      case "ArrowUp":    e.preventDefault(); s = Math.min(numStrings - 1, s + 1); break;
+      case "ArrowDown":  e.preventDefault(); s = Math.max(0, s - 1); break;
+      case "Enter":
+      case " ":
+        e.preventDefault();
+        if (onFretClick) {
+          const pos = getNoteAt(s, f, tuning);
+          onFretClick(s, f, pos.midi);
+        }
+        return;
+      default: return;
+    }
+    setFocusedPos({ s, f });
+  };
+
   const circles: React.ReactNode[] = [];
   const hitTargets: React.ReactNode[] = [];
   for (let s = 0; s < numStrings; s++) {
@@ -117,8 +152,7 @@ export function Fretboard({
         chordActive && chordRootPitchClass != null && pos.pitchClass === chordRootPitchClass;
       const isChordThird =
         chordActive && chordThirdPitchClass != null && pos.pitchClass === chordThirdPitchClass;
-      const isChordFifth =
-        chordActive && chordFifthPitchClass != null && pos.pitchClass === chordFifthPitchClass;
+      const isFocused = focusedPos?.s === s && focusedPos?.f === f;
       // Chord tones override the box focus so they stay visible outside the window.
       const visible =
         (inBox(f) && (isPlayed || isInScale || isLive)) || isChordTone;
@@ -127,6 +161,7 @@ export function Fretboard({
       const cy = stringY(s);
 
       if (onFretClick) {
+        const noteLabel = `${pos.noteName} — string ${s + 1}, fret ${f}`;
         hitTargets.push(
           <rect
             key={`hit-${s}-${f}`}
@@ -136,7 +171,31 @@ export function Fretboard({
             height={stringSpacing}
             fill="transparent"
             cursor="pointer"
+            role="button"
+            aria-label={noteLabel}
             onClick={() => onFretClick(s, f, pos.midi)}
+          />
+        );
+      }
+
+      // Keyboard focus indicator — always visible when focused
+      if (isFocused) {
+        const pos2 = getNoteAt(s, f, tuning);
+        circles.push(
+          <rect
+            key={`focus-${s}-${f}`}
+            x={cx - noteRadius - 4}
+            y={cy - noteRadius - 4}
+            width={(noteRadius + 4) * 2}
+            height={(noteRadius + 4) * 2}
+            rx={4}
+            fill="none"
+            stroke="#fff"
+            strokeWidth={2}
+            strokeDasharray="4 3"
+            opacity={0.85}
+            pointerEvents="none"
+            aria-label={`Focused: ${pos2.noteName}`}
           />
         );
       }
@@ -146,7 +205,6 @@ export function Fretboard({
       const color = colorForPitchClass(pos.pitchClass);
       const baseR = noteRadius;
       const r = isChordTone ? baseR + 1 : baseR;
-      // Dim scale-only tones when a chord is active; chord tones stay bright.
       let groupOpacity = 1;
       if (chordActive && !isChordTone && !isLive) {
         groupOpacity = isPlayed ? 0.6 : 0.35;
@@ -154,7 +212,6 @@ export function Fretboard({
 
       circles.push(
         <g key={`note-${s}-${f}`} pointerEvents="none" opacity={groupOpacity}>
-          {/* Pulsing ring for the live note — static when prefers-reduced-motion */}
           {isLive && (
             <circle
               cx={cx}
@@ -183,11 +240,9 @@ export function Fretboard({
               )}
             </circle>
           )}
-          {/* Chord-root white halo */}
           {isChordRoot && (
             <circle cx={cx} cy={cy} r={r + 4} fill="none" stroke="#fff" strokeWidth={1.5} opacity={0.5} />
           )}
-          {/* Chord-third gold accent — the sweet resolution note */}
           {isChordThird && (
             <circle cx={cx} cy={cy} r={r + 3} fill="none" stroke="#fbbf24" strokeWidth={2} />
           )}
@@ -211,6 +266,16 @@ export function Fretboard({
               opacity={isLive && !isChordTone ? 0.85 : 1}
             />
           )}
+          {/* High-contrast pattern overlay — secondary encoding independent of color */}
+          {highContrast && (
+            <circle
+              cx={cx}
+              cy={cy}
+              r={r - 1}
+              fill={`url(#${HC_PATTERN(pos.pitchClass)})`}
+              pointerEvents="none"
+            />
+          )}
           <text
             x={cx}
             y={cy + 3.5}
@@ -226,14 +291,39 @@ export function Fretboard({
     }
   }
 
+  const focusedNote = focusedPos ? getNoteAt(focusedPos.s, focusedPos.f, tuning) : null;
+
   return (
     <div className="overflow-x-auto">
+      {focusedNote && (
+        <p className="sr-only" aria-live="polite">
+          Focused: {focusedNote.noteName}, string {focusedPos!.s + 1}, fret {focusedPos!.f}
+        </p>
+      )}
       <svg
+        ref={svgRef}
         viewBox={`0 0 ${width} ${height}`}
         width="100%"
         style={{ minWidth: width, maxWidth: "100%", height: "auto" }}
-        aria-label="Guitar fretboard"
+        aria-label="Guitar fretboard — use arrow keys to navigate, Enter to play"
+        tabIndex={onFretClick ? 0 : undefined}
+        onFocus={handleSvgFocus}
+        onBlur={handleSvgBlur}
+        onKeyDown={handleKeyDown}
       >
+        <defs>
+          {/* High-contrast pattern fills */}
+          <pattern id="hc-stripe" patternUnits="userSpaceOnUse" width="5" height="5">
+            <path d="M0,5 L5,0" stroke="rgba(0,0,0,0.45)" strokeWidth="1.2" />
+          </pattern>
+          <pattern id="hc-dot" patternUnits="userSpaceOnUse" width="5" height="5">
+            <circle cx="2.5" cy="2.5" r="1" fill="rgba(0,0,0,0.45)" />
+          </pattern>
+          <pattern id="hc-cross" patternUnits="userSpaceOnUse" width="5" height="5">
+            <path d="M0,2.5 L5,2.5 M2.5,0 L2.5,5" stroke="rgba(0,0,0,0.45)" strokeWidth="1" />
+          </pattern>
+        </defs>
+
         <rect
           x={leftPad + nutWidth}
           y={topPad - 10}

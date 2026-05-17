@@ -89,6 +89,18 @@ export function Metronome() {
             ))}
           </select>
         </label>
+
+        <label className="flex items-center gap-2 text-xs text-zinc-400">
+          Click
+          <select
+            value={m.clickStyle}
+            onChange={(e) => m.setClickStyle(e.target.value as "electronic" | "wood")}
+            className="rounded bg-zinc-800 px-2 py-1 text-sm text-zinc-100"
+          >
+            <option value="electronic">Electronic</option>
+            <option value="wood">Woodblock</option>
+          </select>
+        </label>
       </div>
     </div>
   );

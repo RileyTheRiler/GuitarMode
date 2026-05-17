@@ -44,8 +44,9 @@ export default function Home() {
   const [lastAudioBuffer, setLastAudioBuffer] = useState<AudioBuffer | null>(null);
 
   const [tuning, setTuningState] = useState<TuningPreset>(STANDARD_TUNING_PRESET);
+  const [highContrast, setHighContrastState] = useState(false);
 
-  // Persist tuning selection
+  // Persist tuning and high-contrast selections
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem(TUNING_STORAGE_KEY);
@@ -53,12 +54,19 @@ export default function Home() {
         const preset = TUNING_PRESETS.find((p) => p.id === saved);
         if (preset) setTuningState(preset);
       }
+      const hc = window.localStorage.getItem("guitarmode:high-contrast:v1");
+      if (hc === "1") setHighContrastState(true);
     } catch {}
   }, []);
 
   const handleTuningChange = useCallback((preset: TuningPreset) => {
     setTuningState(preset);
     try { window.localStorage.setItem(TUNING_STORAGE_KEY, preset.id); } catch {}
+  }, []);
+
+  const handleHighContrastChange = useCallback((v: boolean) => {
+    setHighContrastState(v);
+    try { window.localStorage.setItem("guitarmode:high-contrast:v1", v ? "1" : "0"); } catch {}
   }, []);
 
   // Mirror mic errors into appError so the most recent error wins over a stale one.
@@ -317,6 +325,8 @@ export default function Home() {
           micOn={detector.active}
           tuning={tuning}
           onTuningChange={handleTuningChange}
+          highContrast={highContrast}
+          onHighContrastChange={handleHighContrastChange}
         />
       </section>
 
@@ -418,6 +428,7 @@ export default function Home() {
           numFrets={NUM_FRETS}
           tuning={tuning.midi}
           stringLabels={tuning.stringLabels}
+          highContrast={highContrast}
           playedPitchClasses={playedPitchClasses}
           scalePitchClasses={scaleSet}
           rootPitchClass={selected?.root ?? null}

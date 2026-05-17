@@ -13,6 +13,8 @@ type Props = {
   micOn: boolean;
   tuning: TuningPreset;
   onTuningChange: (preset: TuningPreset) => void;
+  highContrast: boolean;
+  onHighContrastChange: (v: boolean) => void;
 };
 
 export function InputSettings({
@@ -24,6 +26,8 @@ export function InputSettings({
   micOn,
   tuning,
   onTuningChange,
+  highContrast,
+  onHighContrastChange,
 }: Props) {
   return (
     <details className="group rounded-lg border border-zinc-800 bg-zinc-900/60">
@@ -151,6 +155,16 @@ export function InputSettings({
             onChange={(e) => onChange({ polyphonic: e.target.checked })}
           />
           Polyphonic mode (chord/chroma detection) &mdash; experimental
+        </label>
+
+        <label className="flex items-center gap-2 text-xs text-zinc-400 sm:col-span-2">
+          <input
+            id="high-contrast"
+            type="checkbox"
+            checked={highContrast}
+            onChange={(e) => onHighContrastChange(e.target.checked)}
+          />
+          High-contrast fretboard (adds patterns for colorblind accessibility)
         </label>
       </div>
     </details>
