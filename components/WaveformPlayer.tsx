@@ -53,7 +53,6 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
   const [progress, setProgress] = useState(0);
   const duration = audioBuffer.duration;
 
-  // Draw waveform whenever buffer changes
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -84,16 +83,6 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
   }, [stopSource, onTimeUpdate]);
 
   const startPlayback = useCallback(() => {
-  const handlePlay = useCallback(() => {
-    if (sourceRef.current) {
-      // pause
-      const elapsed = (performance.now() - startAtRef.current) / 1000;
-      startOffsetRef.current = Math.min(startOffsetRef.current + elapsed, duration);
-      stopSource();
-      setPlaying(false);
-      return;
-    }
-
     const AudioCtx =
       window.AudioContext ||
       (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -110,8 +99,6 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
       if (sourceRef.current !== src) return;
       sourceRef.current = null;
       cancelAnimationFrame(rafRef.current);
-      // Natural end: leave playhead at the end so users see where playback finished.
-      // An explicit Stop resets via handleStop.
       startOffsetRef.current = duration;
       setPlaying(false);
       setProgress(1);
@@ -138,13 +125,10 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
       setPlaying(false);
       return;
     }
-    // If the previous play ran to completion, restart from the beginning.
     if (startOffsetRef.current >= duration) startOffsetRef.current = 0;
     startPlayback();
   }, [duration, playing, stopSource, startPlayback]);
-  }, [audioBuffer, duration, stopSource, onTimeUpdate]);
 
-  // Click on waveform to seek
   const handleSeek = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       const canvas = canvasRef.current;
@@ -185,7 +169,6 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
           style={{ height: CANVAS_H }}
           onClick={handleSeek}
         />
-        {/* Playhead */}
         <div
           className="absolute top-0 bottom-0 w-px bg-amber-400 pointer-events-none"
           style={{ left: `${progress * 100}%` }}

@@ -77,14 +77,17 @@ export function ProgressionEditor({ progression, onChange, currentChord }: Props
   };
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:p-4">
+    <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] p-3 sm:p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="text-sm font-semibold uppercase tracking-wide text-zinc-400 hover:text-zinc-200"
+          className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-zinc-500 hover:text-zinc-200 transition-colors"
         >
-          Chord progression {open ? "▾" : "▸"}
+          Chord progression
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={`transition-transform duration-200 ${open ? "rotate-180" : "rotate-0"}`} aria-hidden="true">
+            <path d="M4 6l4 4 4-4"/>
+          </svg>
         </button>
         <div className="flex flex-wrap items-center gap-2 text-xs sm:gap-3">
           {currentChord && (
