@@ -15,6 +15,7 @@ import { WaveformPlayer } from "@/components/WaveformPlayer";
 import { ProgressionEditor } from "@/components/ProgressionEditor";
 import { Metronome } from "@/components/Metronome";
 import { TimbreVisualizer } from "@/components/TimbreVisualizer";
+import { SoloGenerator } from "@/components/SoloGenerator";
 import { useMicStream } from "@/lib/audio/useMicStream";
 import { usePitchDetector, type DetectedNote } from "@/lib/audio/usePitchDetector";
 import { analyzeAudioBuffer, decodeArrayBuffer } from "@/lib/audio/analyzeBuffer";
@@ -353,15 +354,25 @@ export default function Home() {
 
   return (
     <main className="mx-auto max-w-6xl px-3 py-4 sm:px-4 sm:py-8">
-      <header className="mb-4 sm:mb-6">
-        <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">GuitarMode</h1>
-        <p className="text-sm text-zinc-400">
-          Play your guitar. I&rsquo;ll name the notes, guess the scale, and show you what&rsquo;s
-          next on the fretboard.
-        </p>
+      <header className="mb-6 sm:mb-8">
+        <div className="flex items-center gap-3">
+          <svg width="36" height="36" viewBox="0 0 32 32" fill="none" aria-hidden="true" className="shrink-0 text-emerald-400">
+            <path d="M16 3C10.477 3 6 7.477 6 13c0 4.418 4 9 10 16 6-7 10-11.582 10-16 0-5.523-4.477-10-10-10Z" fill="currentColor" opacity="0.9"/>
+            <circle cx="16" cy="13" r="2.5" fill="#0a0a0a"/>
+          </svg>
+          <div>
+            <h1 className="bg-gradient-to-r from-emerald-400 to-teal-300 bg-clip-text text-transparent text-2xl font-bold tracking-tight sm:text-3xl">
+              GuitarMode
+            </h1>
+            <p className="text-sm text-zinc-400 mt-0.5">
+              Play your guitar. I&rsquo;ll name the notes, guess the scale, and show you what&rsquo;s
+              next on the fretboard.
+            </p>
+          </div>
+        </div>
       </header>
 
-      <section className="mb-4 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:p-4">
+      <section className="mb-4 rounded-xl border border-zinc-800/80 bg-zinc-900/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] p-3 sm:p-4">
         <MicControls
           micOn={detector.active}
           onToggleMic={handleToggleMic}
@@ -411,9 +422,9 @@ export default function Home() {
       </section>
 
       <section className="mb-4 grid gap-4 sm:mb-6 sm:gap-6 lg:grid-cols-2">
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:p-4">
+        <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] p-3 sm:p-4">
           <div className="mb-3 flex items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
+            <h2 className="text-xs font-semibold uppercase tracking-widest text-zinc-500 flex items-center gap-2 before:content-[''] before:block before:h-[3px] before:w-1 before:rounded-full before:bg-emerald-500/70 before:shrink-0">
               Detected notes
             </h2>
             {detector.currentNote && (
@@ -434,8 +445,8 @@ export default function Home() {
             />
           )}
         </div>
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:p-4">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
+        <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] p-3 sm:p-4">
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-zinc-500 flex items-center gap-2 before:content-[''] before:block before:h-[3px] before:w-1 before:rounded-full before:bg-emerald-500/70 before:shrink-0">
             Scale &amp; mode suggestions
           </h2>
           <ScaleSuggestions
@@ -470,7 +481,7 @@ export default function Home() {
             </div>
           )}
           <div className="mt-4">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-zinc-600">
               Timbre (harmonic envelope)
             </h3>
             <TimbreVisualizer
@@ -482,9 +493,9 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="mb-4 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:mb-6 sm:p-4">
+      <section className="mb-4 rounded-xl border border-zinc-800/80 bg-zinc-900/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] p-3 sm:mb-6 sm:p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-zinc-500 flex items-center gap-2 before:content-[''] before:block before:h-[3px] before:w-1 before:rounded-full before:bg-emerald-500/70 before:shrink-0">
             Timeline
           </h2>
           <p className="text-xs text-zinc-500">
@@ -492,6 +503,10 @@ export default function Home() {
           </p>
         </div>
         <Timeline notes={detector.notes} />
+      </section>
+
+      <section className="mb-4 sm:mb-6">
+        <SoloGenerator />
       </section>
 
       <section className="mb-4 sm:mb-6">
@@ -506,9 +521,9 @@ export default function Home() {
         />
       </section>
 
-      <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:p-4">
+      <section className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] p-3 sm:p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-zinc-500 flex items-center gap-2 before:content-[''] before:block before:h-[3px] before:w-1 before:rounded-full before:bg-emerald-500/70 before:shrink-0">
             Fretboard
           </h2>
           <div className="flex flex-wrap items-center gap-2">

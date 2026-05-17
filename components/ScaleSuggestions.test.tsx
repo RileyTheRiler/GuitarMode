@@ -35,7 +35,7 @@ describe("ScaleSuggestions", () => {
         detectedCount={0}
       />
     );
-    expect(screen.getByText(/scale suggestions will appear/i)).toBeTruthy();
+    expect(screen.getByText(/scale suggestions appear once you play/i)).toBeTruthy();
   });
 
   it("renders a scale match with name and confidence", () => {

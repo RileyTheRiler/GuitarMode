@@ -99,7 +99,6 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
       if (sourceRef.current !== src) return;
       sourceRef.current = null;
       cancelAnimationFrame(rafRef.current);
-      // Natural end: leave playhead at the end so users see where playback finished.
       startOffsetRef.current = duration;
       setPlaying(false);
       setProgress(1);
@@ -126,7 +125,6 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
       setPlaying(false);
       return;
     }
-    // If the previous play ran to completion, restart from the beginning.
     if (startOffsetRef.current >= duration) startOffsetRef.current = 0;
     startPlayback();
   }, [duration, playing, stopSource, startPlayback]);

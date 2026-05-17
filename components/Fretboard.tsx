@@ -17,6 +17,8 @@ type Props = {
   scalePitchClasses?: Set<number>;
   rootPitchClass?: number | null;
   currentPitchClass?: number | null;
+  /** When set, pulsing animation is shown only at this exact string+fret instead of all positions with currentPitchClass. */
+  highlightFretPosition?: { stringIndex: number; fret: number } | null;
   chordPitchClasses?: Set<number>;
   chordRootPitchClass?: number | null;
   chordThirdPitchClass?: number | null;
@@ -71,6 +73,7 @@ export function Fretboard({
   scalePitchClasses,
   rootPitchClass,
   currentPitchClass,
+  highlightFretPosition,
   chordPitchClasses,
   chordRootPitchClass,
   chordThirdPitchClass,
@@ -164,7 +167,9 @@ export function Fretboard({
       const isPlayed = playedPitchClasses.has(pos.pitchClass);
       const isInScale = scalePitchClasses?.has(pos.pitchClass) ?? false;
       const isRoot = rootPitchClass != null && pos.pitchClass === rootPitchClass;
-      const isLive = currentPitchClass != null && pos.pitchClass === currentPitchClass;
+      const isLive = highlightFretPosition
+        ? highlightFretPosition.stringIndex === s && highlightFretPosition.fret === f
+        : currentPitchClass != null && pos.pitchClass === currentPitchClass;
       const isChordTone = chordActive && (chordPitchClasses?.has(pos.pitchClass) ?? false);
       const isChordRoot =
         chordActive && chordRootPitchClass != null && pos.pitchClass === chordRootPitchClass;
@@ -174,7 +179,7 @@ export function Fretboard({
       const isVoicing = voicingSet?.has(`${s}:${f}`) ?? false;
       // Chord tones override the box focus so they stay visible outside the window.
       const visible =
-        (inBox(f) && (isPlayed || isInScale || isLive)) || isChordTone || isVoicing;
+        (inBox(f) && (isPlayed || isInScale || isLive)) || isChordTone || isVoicing || isLive;
 
       const cx = fretX(f);
       const cy = stringY(s);

@@ -8,9 +8,9 @@ export function Metronome() {
   const m = useMetronome();
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:p-4">
+    <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] p-3 sm:p-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
+        <h2 className="text-xs font-semibold uppercase tracking-widest text-zinc-500 flex items-center gap-2 before:content-[''] before:block before:h-[3px] before:w-1 before:rounded-full before:bg-emerald-500/70 before:shrink-0">
           Metronome
         </h2>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -22,15 +22,20 @@ export function Metronome() {
               <span
                 key={beat}
                 aria-label={`Beat ${beat}${isAccent ? " (accent)" : ""}`}
-                className={`h-3 w-3 rounded-full transition-colors ${
+                className={`h-4 w-4 rounded-full transition-all duration-75 ${
                   isActive
                     ? isAccent
-                      ? "bg-amber-400"
-                      : "bg-emerald-400"
+                      ? "bg-amber-400 scale-125"
+                      : "bg-emerald-400 scale-110"
                     : isAccent
-                    ? "bg-amber-400/25"
+                    ? "bg-amber-400/30"
                     : "bg-zinc-700"
                 }`}
+                style={
+                  isActive && isAccent
+                    ? { boxShadow: "0 0 8px rgba(251, 191, 36, 0.6)" }
+                    : undefined
+                }
               />
             );
           })}
@@ -42,12 +47,21 @@ export function Metronome() {
           type="button"
           onClick={m.toggle}
           aria-pressed={m.playing}
-          className={`rounded-md px-3 py-2 text-sm font-medium transition ${
+          className={`inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition ${
             m.playing
               ? "bg-emerald-500 text-zinc-950 hover:bg-emerald-400"
               : "bg-zinc-800 text-zinc-100 hover:bg-zinc-700"
           }`}
         >
+          {m.playing ? (
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true">
+              <rect x="1" y="1" width="8" height="8" rx="1"/>
+            </svg>
+          ) : (
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+              <path d="M3 2l7 4-7 4V2Z"/>
+            </svg>
+          )}
           {m.playing ? "Stop" : "Start"}
         </button>
 

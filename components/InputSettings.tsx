@@ -30,9 +30,20 @@ export function InputSettings({
   onHighContrastChange,
 }: Props) {
   return (
-    <details className="group rounded-lg border border-zinc-800 bg-zinc-900/60">
-      <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium text-zinc-300 group-open:border-b group-open:border-zinc-800">
-        Input &amp; detection
+    <details className="group rounded-lg border border-zinc-800/80 bg-zinc-900/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+      <summary className="flex cursor-pointer select-none items-center justify-between px-4 py-3 text-sm font-medium text-zinc-300 group-open:border-b group-open:border-zinc-800 hover:text-zinc-100 transition-colors">
+        <span className="flex items-center gap-2">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+            <path d="M2 4h12M2 8h12M2 12h12"/>
+            <circle cx="5" cy="4" r="1.5" fill="currentColor" stroke="none"/>
+            <circle cx="10" cy="8" r="1.5" fill="currentColor" stroke="none"/>
+            <circle cx="6" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+          </svg>
+          Input &amp; detection
+        </span>
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="transition-transform duration-200 group-open:rotate-180" aria-hidden="true">
+          <path d="M4 6l4 4 4-4"/>
+        </svg>
       </summary>
       <div className="grid gap-4 p-3 sm:grid-cols-2">
         <div className="flex flex-col gap-1 text-xs text-zinc-400">
