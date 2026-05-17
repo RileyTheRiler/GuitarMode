@@ -45,6 +45,100 @@ export function scheduleClick(time: number, accent = false) {
 }
 
 /**
+ * Schedule a guitar-ish pluck at a specific AudioContext time. Unlike
+ * playPluck(), this uses the audio clock for sample-accurate timing so it can
+ * be called ahead-of-time to schedule an entire solo. The decay window starts
+ * at `time`; pass `ctx.currentTime` to play immediately.
+ */
+export function schedulePluck(midi: number, time: number, a4Hz = 440) {
+  const ctx = getContext();
+  if (ctx.state === "suspended") ctx.resume().catch(() => {});
+  const fundamental = midiToFreq(midi, a4Hz);
+
+  const master = ctx.createGain();
+  master.gain.setValueAtTime(0, time);
+  master.gain.linearRampToValueAtTime(0.22, time + 0.005);
+  master.gain.exponentialRampToValueAtTime(0.0005, time + 0.85);
+
+  const filter = ctx.createBiquadFilter();
+  filter.type = "lowpass";
+  filter.frequency.setValueAtTime(fundamental * 8, time);
+  filter.frequency.exponentialRampToValueAtTime(fundamental * 2, time + 0.85);
+  filter.Q.value = 1;
+
+  for (const detune of [-6, 6]) {
+    const osc = ctx.createOscillator();
+    osc.type = "triangle";
+    osc.frequency.value = fundamental;
+    osc.detune.value = detune;
+    osc.connect(filter);
+    osc.start(time);
+    osc.stop(time + 1.0);
+  }
+
+  filter.connect(master);
+  master.connect(ctx.destination);
+
+  const cleanupMs = Math.max(0, (time - ctx.currentTime) * 1000) + 1100;
+  setTimeout(() => {
+    try { master.disconnect(); filter.disconnect(); } catch {}
+  }, cleanupMs);
+}
+
+/**
+ * Schedule a string bend: pick at `midi`, glide the pitch up by `semitones`
+ * semitones over `bendMs` milliseconds, then sustain and decay.
+ * Sounds convincingly like a real guitar bend because the oscillator
+ * frequency is ramped on the audio clock — no timer jitter.
+ */
+export function scheduleBend(
+  midi: number,
+  semitones: number,
+  time: number,
+  bendMs = 220,
+  a4Hz = 440
+) {
+  const ctx = getContext();
+  if (ctx.state === "suspended") ctx.resume().catch(() => {});
+
+  const freqStart = midiToFreq(midi, a4Hz);
+  const freqEnd = midiToFreq(midi + semitones, a4Hz);
+  const bendEnd = time + bendMs / 1000;
+  const decay = time + 1.4;
+
+  const master = ctx.createGain();
+  master.gain.setValueAtTime(0, time);
+  master.gain.linearRampToValueAtTime(0.24, time + 0.006);
+  master.gain.setValueAtTime(0.24, bendEnd);
+  master.gain.exponentialRampToValueAtTime(0.0005, decay);
+
+  const filter = ctx.createBiquadFilter();
+  filter.type = "lowpass";
+  filter.frequency.setValueAtTime(freqStart * 8, time);
+  filter.frequency.exponentialRampToValueAtTime(freqEnd * 3, decay);
+  filter.Q.value = 1.2;
+
+  for (const detune of [-5, 5]) {
+    const osc = ctx.createOscillator();
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(freqStart, time);
+    osc.frequency.linearRampToValueAtTime(freqEnd, bendEnd);
+    osc.detune.value = detune;
+    osc.connect(filter);
+    osc.start(time);
+    osc.stop(decay + 0.05);
+  }
+
+  filter.connect(master);
+  master.connect(ctx.destination);
+
+  const cleanupMs = Math.max(0, (time - ctx.currentTime) * 1000) + (decay - time) * 1000 + 200;
+  setTimeout(() => {
+    try { master.disconnect(); filter.disconnect(); } catch {}
+  }, cleanupMs);
+}
+
+/**
  * Play a short, guitar-ish pluck at the given MIDI pitch. Uses a pair of
  * slightly-detuned triangle oscillators through an exponential envelope.
  * Good enough for previewing a fretboard position.
