@@ -1,3 +1,4 @@
+import { midiToPitchClass } from "../music/notes";
 import type { DiatonicTriad } from "../music/diatonicChords";
 
 export type VoicingNote = { stringIndex: number; fret: number };
@@ -23,12 +24,8 @@ const A_SHAPE: Record<string, Shape> = {
   other: [null, 0, 2, 2, 2, 0],
 };
 
-function rootFretOnString(
-  rootPc: number,
-  stringIndex: number,
-  tuning: number[]
-): number {
-  const openPc = ((tuning[stringIndex] % 12) + 12) % 12;
+function rootFretOnString(rootPc: number, stringIndex: number, tuning: number[]): number {
+  const openPc = midiToPitchClass(tuning[stringIndex]);
   return ((rootPc - openPc) + 12) % 12;
 }
 

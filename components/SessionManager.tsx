@@ -44,30 +44,40 @@ export function SessionManager({ notes, chromaProfile, onRestore }: Props) {
 
   useEffect(() => {
     setSessions(loadSessions());
-  }, [open]);
+  }, []);
 
   const handleSave = useCallback(() => {
     if (notes.length === 0) return;
-    const existing = loadSessions();
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const name = `Session ${existing.length + 1}`;
-    const entry: SavedSession = { id, name, savedAt: Date.now(), notes, chromaProfile };
-    const next = [entry, ...existing].slice(0, MAX_SESSIONS);
-    persistSessions(next);
-    setSessions(next);
+    setSessions((prev) => {
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const entry: SavedSession = {
+        id,
+        name: `Session ${prev.length + 1}`,
+        savedAt: Date.now(),
+        notes,
+        chromaProfile,
+      };
+      const next = [entry, ...prev].slice(0, MAX_SESSIONS);
+      persistSessions(next);
+      return next;
+    });
     setOpen(true);
   }, [notes, chromaProfile]);
 
   const handleDelete = useCallback((id: string) => {
-    const next = loadSessions().filter((s) => s.id !== id);
-    persistSessions(next);
-    setSessions(next);
+    setSessions((prev) => {
+      const next = prev.filter((s) => s.id !== id);
+      persistSessions(next);
+      return next;
+    });
   }, []);
 
   const handleRename = useCallback((id: string, name: string) => {
-    const next = loadSessions().map((s) => (s.id === id ? { ...s, name } : s));
-    persistSessions(next);
-    setSessions(next);
+    setSessions((prev) => {
+      const next = prev.map((s) => (s.id === id ? { ...s, name } : s));
+      persistSessions(next);
+      return next;
+    });
   }, []);
 
   const hasNotes = notes.length > 0;

@@ -21,7 +21,6 @@ export function DetectedNotes({ notes, onDelete }: Props) {
   }
   return (
     <div>
-      {/* Announce the most-recent note to screen readers */}
       <span
         role="status"
         aria-live="polite"
@@ -32,9 +31,10 @@ export function DetectedNotes({ notes, onDelete }: Props) {
       </span>
       <div className="flex flex-wrap items-center gap-1.5">
         {notes.map((n, i) => (
-          <span key={n.at} className="inline-flex items-center gap-1.5">
+          <>
             {i > 0 && notes[i].at - notes[i - 1].at < INTERVAL_GAP_MS && (
               <span
+                key={`iv-${n.at}`}
                 className="text-[10px] text-zinc-500 select-none"
                 aria-label={`interval: ${intervalName(n.pitchClass - notes[i - 1].pitchClass)}`}
               >
@@ -42,6 +42,7 @@ export function DetectedNotes({ notes, onDelete }: Props) {
               </span>
             )}
             <span
+              key={n.at}
               className="inline-flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-sm text-zinc-100"
               title={`${n.durationMs.toFixed(0)} ms`}
             >
@@ -70,7 +71,7 @@ export function DetectedNotes({ notes, onDelete }: Props) {
                 </button>
               )}
             </span>
-          </span>
+          </>
         ))}
       </div>
     </div>

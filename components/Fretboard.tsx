@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { colorForPitchClass, pitchClassName } from "@/lib/music/notes";
 import { STANDARD_TUNING, getNoteAt } from "@/lib/guitar/fretboard";
 
@@ -146,10 +146,12 @@ export function Fretboard({
     setFocusedPos({ s, f });
   };
 
-  // Build a Set for fast voicing position lookup
-  const voicingSet = voicingPositions
-    ? new Set(voicingPositions.map((v) => `${v.stringIndex}:${v.fret}`))
-    : null;
+  const voicingSet = useMemo(
+    () => voicingPositions
+      ? new Set(voicingPositions.map((v) => `${v.stringIndex}:${v.fret}`))
+      : null,
+    [voicingPositions]
+  );
 
   const circles: React.ReactNode[] = [];
   const hitTargets: React.ReactNode[] = [];

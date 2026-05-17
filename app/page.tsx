@@ -37,6 +37,9 @@ import { TunerDisplay } from "@/components/TunerDisplay";
 
 const NUM_FRETS = 22;
 const TUNING_STORAGE_KEY = "guitarmode:tuning:v1";
+const HIGH_CONTRAST_KEY = "guitarmode:high-contrast:v1";
+const CAPO_KEY = "guitarmode:capo:v1";
+const DEGREE_NAMES = ["1","♭2","2","♭3","3","4","♯4","5","♭6","6","♭7","7"] as const;
 
 export default function Home() {
   const mic = useMicStream();
@@ -64,9 +67,9 @@ export default function Home() {
         const preset = TUNING_PRESETS.find((p) => p.id === saved);
         if (preset) setTuningState(preset);
       }
-      const hc = window.localStorage.getItem("guitarmode:high-contrast:v1");
+      const hc = window.localStorage.getItem(HIGH_CONTRAST_KEY);
       if (hc === "1") setHighContrastState(true);
-      const capo = window.localStorage.getItem("guitarmode:capo:v1");
+      const capo = window.localStorage.getItem(CAPO_KEY);
       if (capo) setCapoFretState(Math.max(0, Math.min(12, Number(capo) || 0)));
     } catch {}
   }, []);
@@ -78,12 +81,12 @@ export default function Home() {
 
   const handleHighContrastChange = useCallback((v: boolean) => {
     setHighContrastState(v);
-    try { window.localStorage.setItem("guitarmode:high-contrast:v1", v ? "1" : "0"); } catch {}
+    try { window.localStorage.setItem(HIGH_CONTRAST_KEY, v ? "1" : "0"); } catch {}
   }, []);
 
   const handleCapoChange = useCallback((n: number) => {
     setCapoFretState(n);
-    try { window.localStorage.setItem("guitarmode:capo:v1", String(n)); } catch {}
+    try { window.localStorage.setItem(CAPO_KEY, String(n)); } catch {}
   }, []);
 
   const handleDiatonicSelect = useCallback((degree: number) => {
@@ -293,7 +296,6 @@ export default function Home() {
     [selected]
   );
 
-  const DEGREE_NAMES = ["1","♭2","2","♭3","3","4","♯4","5","♭6","6","♭7","7"];
   const degreeMap = useMemo(() => {
     if (!selected) return undefined;
     const map = new Map<number, string>();
