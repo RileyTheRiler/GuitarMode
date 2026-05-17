@@ -17,7 +17,17 @@ export function DetectedNotes({ notes, onDelete }: Props) {
     );
   }
   return (
-    <div className="flex flex-wrap gap-2">
+    <div>
+      {/* Announce the most-recent note to screen readers */}
+      <span
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+      >
+        {notes.length > 0 ? `Detected: ${notes[notes.length - 1].noteName}` : ""}
+      </span>
+      <div className="flex flex-wrap gap-2">
       {notes.map((n, i) => (
         <span
           key={n.at}
@@ -50,6 +60,7 @@ export function DetectedNotes({ notes, onDelete }: Props) {
           )}
         </span>
       ))}
+      </div>
     </div>
   );
 }

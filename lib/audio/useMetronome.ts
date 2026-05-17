@@ -45,6 +45,7 @@ export function useMetronome() {
   // Hydrate persisted settings. Gated ref so the first write doesn't clobber
   // storage before we read it on mount.
   const hydratedRef = useRef(false);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (typeof window === "undefined") {
       hydratedRef.current = true;
@@ -67,14 +68,17 @@ export function useMetronome() {
 
   useEffect(() => {
     if (!hydratedRef.current || typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ bpm, beatsPerBar } satisfies Persisted)
-      );
-    } catch (err) {
-      console.warn("useMetronome: failed to persist settings", err);
-    }
+    if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = setTimeout(() => {
+      try {
+        window.localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify({ bpm, beatsPerBar } satisfies Persisted)
+        );
+      } catch (err) {
+        console.warn("useMetronome: failed to persist settings", err);
+      }
+    }, 500);
   }, [bpm, beatsPerBar]);
 
   const tick = useCallback(() => {

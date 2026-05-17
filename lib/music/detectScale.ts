@@ -55,6 +55,7 @@ export function detectScales(profile: PitchClassProfile, topN = 5): ScaleMatch[]
       score += profile[root] * 0.75;
       score += profile[(root + 7) % 12] * 0.25;
       score -= template.specificity * totalWeight;
+      score += template.popularity * totalWeight;
 
       const scaleArr = Array.from(scaleSet).sort((a, b) => a - b);
       const missing = scaleArr.filter((pc) => profile[pc] <= 0);

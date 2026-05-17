@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { colorForPitchClass, pitchClassName } from "@/lib/music/notes";
-import { STANDARD_TUNING, STRING_LABELS, getNoteAt } from "@/lib/guitar/fretboard";
+import { STANDARD_TUNING, getNoteAt } from "@/lib/guitar/fretboard";
 
 type Props = {
   numFrets?: number;
+  tuning?: number[];
+  stringLabels?: string[];
   playedPitchClasses: Set<number>;
   scalePitchClasses?: Set<number>;
   rootPitchClass?: number | null;
@@ -37,8 +39,23 @@ function useCompactFretboard() {
   return compact;
 }
 
+function useReducedMotion() {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setReduced(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+  return reduced;
+}
+
 export function Fretboard({
   numFrets = 22,
+  tuning = STANDARD_TUNING,
+  stringLabels,
   playedPitchClasses,
   scalePitchClasses,
   rootPitchClass,
@@ -52,8 +69,10 @@ export function Fretboard({
   onFretClick,
 }: Props) {
   const chordActive = !!chordPitchClasses && chordPitchClasses.size > 0;
-  const numStrings = STANDARD_TUNING.length;
+  const numStrings = tuning.length;
   const compact = useCompactFretboard();
+  const reducedMotion = useReducedMotion();
+  const displayLabels = stringLabels ?? tuning.map((_, i) => ["E", "A", "D", "G", "B", "e"][i] ?? String(i + 1));
   const nutWidth = compact ? 8 : 10;
   const leftPad = compact ? 30 : 44;
   const rightPad = compact ? 10 : 16;
@@ -88,7 +107,7 @@ export function Fretboard({
   const hitTargets: React.ReactNode[] = [];
   for (let s = 0; s < numStrings; s++) {
     for (let f = 0; f <= numFrets; f++) {
-      const pos = getNoteAt(s, f);
+      const pos = getNoteAt(s, f, tuning);
       const isPlayed = playedPitchClasses.has(pos.pitchClass);
       const isInScale = scalePitchClasses?.has(pos.pitchClass) ?? false;
       const isRoot = rootPitchClass != null && pos.pitchClass === rootPitchClass;
@@ -135,21 +154,33 @@ export function Fretboard({
 
       circles.push(
         <g key={`note-${s}-${f}`} pointerEvents="none" opacity={groupOpacity}>
-          {/* Pulsing ring for the live note */}
+          {/* Pulsing ring for the live note — static when prefers-reduced-motion */}
           {isLive && (
-            <circle cx={cx} cy={cy} r={r + 5} fill="none" stroke={color} strokeWidth={2}>
-              <animate
-                attributeName="r"
-                values={`${r + 3};${r + 9};${r + 3}`}
-                dur="0.9s"
-                repeatCount="indefinite"
-              />
-              <animate
-                attributeName="opacity"
-                values="0.7;0;0.7"
-                dur="0.9s"
-                repeatCount="indefinite"
-              />
+            <circle
+              cx={cx}
+              cy={cy}
+              r={r + 5}
+              fill="none"
+              stroke={color}
+              strokeWidth={2}
+              opacity={reducedMotion ? 0.6 : undefined}
+            >
+              {!reducedMotion && (
+                <>
+                  <animate
+                    attributeName="r"
+                    values={`${r + 3};${r + 9};${r + 3}`}
+                    dur="0.9s"
+                    repeatCount="indefinite"
+                  />
+                  <animate
+                    attributeName="opacity"
+                    values="0.7;0;0.7"
+                    dur="0.9s"
+                    repeatCount="indefinite"
+                  />
+                </>
+              )}
             </circle>
           )}
           {/* Chord-root white halo */}
@@ -284,7 +315,7 @@ export function Fretboard({
             fill="#e5e5e5"
             textAnchor="middle"
           >
-            {STRING_LABELS[s]}
+            {displayLabels[s]}
           </text>
         ))}
 

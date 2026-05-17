@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { colorForPitchClass, pitchClassName } from "@/lib/music/notes";
 import type { ScaleMatch } from "@/lib/music/detectScale";
 
@@ -9,6 +10,39 @@ type Props = {
   onSelect: (index: number) => void;
   detectedCount: number;
 };
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title="Copy scale info"
+      className="ml-auto rounded p-1 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors"
+      aria-label="Copy scale info to clipboard"
+    >
+      {copied ? (
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="2,7 5.5,10.5 12,4" />
+        </svg>
+      ) : (
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="5" y="1" width="8" height="10" rx="1.5" />
+          <path d="M9 1V0H1v10h2" />
+        </svg>
+      )}
+    </button>
+  );
+}
 
 export function ScaleSuggestions({ matches, selectedIndex, onSelect, detectedCount }: Props) {
   if (matches.length === 0) {
@@ -32,6 +66,9 @@ export function ScaleSuggestions({ matches, selectedIndex, onSelect, detectedCou
         {matches.map((m, i) => {
           const selected = i === selectedIndex;
           const pct = Math.round(m.confidence * 100);
+          const noteNames = m.scale.map((pc) => pitchClassName(pc)).join(", ");
+          const copyText = `${m.rootName} ${m.templateName} — confidence ${pct}% — notes: ${noteNames}`;
+
           return (
             <li key={`${m.root}-${m.templateName}`}>
               <button
@@ -43,11 +80,14 @@ export function ScaleSuggestions({ matches, selectedIndex, onSelect, detectedCou
                     : "border-zinc-700 bg-zinc-900 hover:border-zinc-500"
                 }`}
               >
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <span className="font-medium text-zinc-100">
                     {m.rootName} {m.templateName}
                   </span>
-                  <span className="text-xs text-zinc-400">{pct}%</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs text-zinc-400">{pct}%</span>
+                    <CopyButton text={copyText} />
+                  </div>
                 </div>
                 <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-zinc-800">
                   <div

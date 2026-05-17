@@ -6,6 +6,7 @@ import { Fretboard } from "@/components/Fretboard";
 import { FretboardControls } from "@/components/FretboardControls";
 import { DetectedNotes } from "@/components/DetectedNotes";
 import { ScaleSuggestions } from "@/components/ScaleSuggestions";
+import { ChordSuggestions } from "@/components/ChordSuggestions";
 import { InputSettings } from "@/components/InputSettings";
 import { Timeline } from "@/components/Timeline";
 import { ChromaChart } from "@/components/ChromaChart";
@@ -17,6 +18,7 @@ import { useMicStream } from "@/lib/audio/useMicStream";
 import { usePitchDetector, type DetectedNote } from "@/lib/audio/usePitchDetector";
 import { analyzeAudioBuffer, decodeArrayBuffer } from "@/lib/audio/analyzeBuffer";
 import { detectScales } from "@/lib/music/detectScale";
+import { detectChords } from "@/lib/music/detectChord";
 import { buildProfile, profilePitchClassSet } from "@/lib/music/profile";
 import { playPluck } from "@/lib/audio/tonePlayer";
 import {
@@ -25,8 +27,11 @@ import {
   type ChordEvent,
 } from "@/lib/music/progression";
 import { chordPitchClasses, parseChord } from "@/lib/music/chords";
+import { TUNING_PRESETS, STANDARD_TUNING_PRESET, type TuningPreset } from "@/lib/guitar/tunings";
+import { downloadMidi } from "@/lib/export/midi";
 
 const NUM_FRETS = 22;
+const TUNING_STORAGE_KEY = "guitarmode:tuning:v1";
 
 export default function Home() {
   const mic = useMicStream();
@@ -37,6 +42,24 @@ export default function Home() {
   const [appError, setAppError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [lastAudioBuffer, setLastAudioBuffer] = useState<AudioBuffer | null>(null);
+
+  const [tuning, setTuningState] = useState<TuningPreset>(STANDARD_TUNING_PRESET);
+
+  // Persist tuning selection
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(TUNING_STORAGE_KEY);
+      if (saved) {
+        const preset = TUNING_PRESETS.find((p) => p.id === saved);
+        if (preset) setTuningState(preset);
+      }
+    } catch {}
+  }, []);
+
+  const handleTuningChange = useCallback((preset: TuningPreset) => {
+    setTuningState(preset);
+    try { window.localStorage.setItem(TUNING_STORAGE_KEY, preset.id); } catch {}
+  }, []);
 
   // Mirror mic errors into appError so the most recent error wins over a stale one.
   useEffect(() => {
@@ -80,6 +103,7 @@ export default function Home() {
   );
   const playedPitchClasses = useMemo(() => profilePitchClassSet(profile), [profile]);
   const matches = useMemo(() => detectScales(profile, 5), [profile]);
+  const chordMatches = useMemo(() => detectChords(profile, 4), [profile]);
 
   useEffect(() => {
     if (matches.length === 0) setSelectedIndex(null);
@@ -99,7 +123,6 @@ export default function Home() {
       const stream = await mic.start(mic.currentDeviceId);
       await detector.start(stream);
     } catch (e) {
-      // mic errors are mirrored via the effect above; catch detector-side failures here.
       if (mic.streamRef.current) {
         setAppError(e instanceof Error ? e.message : "Could not start analysis");
       }
@@ -136,8 +159,6 @@ export default function Home() {
   const handleUpload = useCallback(
     async (file: File) => {
       setAppError(null);
-      // Analyzing an uploaded file replaces the note buffer, so stop the live
-      // detector first to avoid it appending frames over the result.
       if (detector.active) detector.stop();
       setAnalyzing(true);
       try {
@@ -168,11 +189,8 @@ export default function Home() {
 
   const handleStartRecording = useCallback(async () => {
     setAppError(null);
-    // Avoid live detection writing into the note buffer while a recording is
-    // being captured — the onstop handler will replace notes wholesale.
     if (detector.active) detector.stop();
     const gen = ++recordingGenRef.current;
-    // Snapshot config at record-start so mid-recording changes don't skew analysis.
     const cfgSnapshot = {
       a4Hz: detector.config.a4Hz,
       polyphonic: detector.config.polyphonic,
@@ -196,7 +214,6 @@ export default function Home() {
           const arr = await blob.arrayBuffer();
           const buffer = await decodeArrayBuffer(arr);
           const result = await analyzeAudioBuffer(buffer, cfgSnapshot);
-          // Bail out if a newer recording started or the component unmounted.
           if (!mountedRef.current || gen !== recordingGenRef.current) return;
           const newNotes: DetectedNote[] = result.notes;
           detector.reset();
@@ -225,6 +242,10 @@ export default function Home() {
     setRecording(false);
   }, []);
 
+  const handleExportMidi = useCallback(() => {
+    downloadMidi(detector.notes);
+  }, [detector.notes]);
+
   const scaleSet = useMemo(
     () => (selected ? new Set(selected.scale) : undefined),
     [selected]
@@ -236,6 +257,26 @@ export default function Home() {
     },
     [detector.config.a4Hz]
   );
+
+  // Keyboard shortcuts: Space = mic, Escape = reset, R = record
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      // Don't intercept when typing in an input, textarea, or select
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.key === " " || e.code === "Space") {
+        e.preventDefault();
+        handleToggleMic();
+      } else if (e.key === "Escape") {
+        handleReset();
+      } else if (e.key === "r" || e.key === "R") {
+        if (recording) handleStopRecording();
+        else if (detector.active || mic.streamRef.current) handleStartRecording();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [handleToggleMic, handleReset, handleStartRecording, handleStopRecording, recording, detector.active, mic.streamRef]);
 
   const hasChroma = detector.chromaProfile.some((v) => v > 0);
 
@@ -257,10 +298,12 @@ export default function Home() {
           onUpload={handleUpload}
           onStartRecording={handleStartRecording}
           onStopRecording={handleStopRecording}
+          onExportMidi={handleExportMidi}
           recording={recording}
           analyzing={analyzing}
           level={detector.level}
           error={appError}
+          hasNotes={detector.notes.length > 0}
         />
       </section>
 
@@ -272,6 +315,8 @@ export default function Home() {
           currentDeviceId={mic.currentDeviceId}
           onDeviceChange={handleDeviceChange}
           micOn={detector.active}
+          tuning={tuning}
+          onTuningChange={handleTuningChange}
         />
       </section>
 
@@ -309,6 +354,9 @@ export default function Home() {
             onSelect={setSelectedIndex}
             detectedCount={playedPitchClasses.size}
           />
+          {detector.notes.length >= 2 && (
+            <ChordSuggestions matches={chordMatches} />
+          )}
           {hasChroma && (
             <div className="mt-4">
               <ChromaChart chroma={detector.chromaProfile} />
@@ -368,6 +416,8 @@ export default function Home() {
         </div>
         <Fretboard
           numFrets={NUM_FRETS}
+          tuning={tuning.midi}
+          stringLabels={tuning.stringLabels}
           playedPitchClasses={playedPitchClasses}
           scalePitchClasses={scaleSet}
           rootPitchClass={selected?.root ?? null}
@@ -388,6 +438,9 @@ export default function Home() {
 
       <footer className="mt-8 text-xs text-zinc-500">
         Clean tone works best. Mic access requires HTTPS (Vercel provides it automatically; localhost works for dev).
+        Keyboard shortcuts: <kbd className="rounded bg-zinc-800 px-1">Space</kbd> mic &middot;{" "}
+        <kbd className="rounded bg-zinc-800 px-1">R</kbd> record &middot;{" "}
+        <kbd className="rounded bg-zinc-800 px-1">Esc</kbd> reset
       </footer>
     </main>
   );

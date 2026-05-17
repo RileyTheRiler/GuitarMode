@@ -14,8 +14,12 @@ export type FretPosition = {
   noteName: string;
 };
 
-export function getNoteAt(stringIndex: number, fret: number): FretPosition {
-  const midi = STANDARD_TUNING[stringIndex] + fret;
+export function getNoteAt(
+  stringIndex: number,
+  fret: number,
+  tuning: number[] = STANDARD_TUNING
+): FretPosition {
+  const midi = tuning[stringIndex] + fret;
   return {
     stringIndex,
     fret,
@@ -25,16 +29,20 @@ export function getNoteAt(stringIndex: number, fret: number): FretPosition {
   };
 }
 
-export function allPositions(maxFret: number): FretPosition[] {
+export function allPositions(maxFret: number, tuning: number[] = STANDARD_TUNING): FretPosition[] {
   const positions: FretPosition[] = [];
-  for (let s = 0; s < STANDARD_TUNING.length; s++) {
+  for (let s = 0; s < tuning.length; s++) {
     for (let f = 0; f <= maxFret; f++) {
-      positions.push(getNoteAt(s, f));
+      positions.push(getNoteAt(s, f, tuning));
     }
   }
   return positions;
 }
 
-export function positionsForPitchClass(pc: number, maxFret: number): FretPosition[] {
-  return allPositions(maxFret).filter((p) => p.pitchClass === pc);
+export function positionsForPitchClass(
+  pc: number,
+  maxFret: number,
+  tuning: number[] = STANDARD_TUNING
+): FretPosition[] {
+  return allPositions(maxFret, tuning).filter((p) => p.pitchClass === pc);
 }
