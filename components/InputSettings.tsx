@@ -18,6 +18,8 @@ type Props = {
   tuningOffsetsCents: number[];
   onTuningOffsetChange: (stringIndex: number, cents: number) => void;
   onResetTuningOffsets: () => void;
+  highContrast: boolean;
+  onHighContrastChange: (v: boolean) => void;
 };
 
 export function InputSettings({
@@ -33,6 +35,8 @@ export function InputSettings({
   tuningOffsetsCents,
   onTuningOffsetChange,
   onResetTuningOffsets,
+  highContrast,
+  onHighContrastChange,
 }: Props) {
   const labels = stringLabelsFor(tuning.midi);
   const hasOffsets = tuningOffsetsCents.some((c) => c !== 0);
@@ -53,9 +57,10 @@ export function InputSettings({
         </svg>
       </summary>
       <div className="grid gap-4 p-3 sm:grid-cols-2">
-        <label className="flex flex-col gap-1 text-xs text-zinc-400">
-          Input device
+        <div className="flex flex-col gap-1 text-xs text-zinc-400">
+          <label htmlFor="input-device">Input device</label>
           <select
+            id="input-device"
             className="rounded bg-zinc-800 px-2 py-1 text-sm text-zinc-100"
             value={currentDeviceId ?? ""}
             onChange={(e) => onDeviceChange(e.target.value)}
@@ -72,7 +77,7 @@ export function InputSettings({
               Turn on the mic to see device names.
             </span>
           )}
-        </label>
+        </div>
 
         <label className="flex flex-col gap-1 text-xs text-zinc-400">
           Tuning
@@ -92,6 +97,7 @@ export function InputSettings({
         <label className="flex flex-col gap-1 text-xs text-zinc-400">
           Concert pitch (A4)
           <select
+            id="concert-pitch"
             className="rounded bg-zinc-800 px-2 py-1 text-sm text-zinc-100"
             value={config.a4Hz}
             onChange={(e) => onChange({ a4Hz: Number(e.target.value) })}
@@ -106,29 +112,34 @@ export function InputSettings({
 
         <label className="flex items-center gap-2 text-xs text-zinc-400">
           <input
+            id="high-pass"
             type="checkbox"
             checked={config.highPass}
             onChange={(e) => onChange({ highPass: e.target.checked })}
           />
-          High-pass filter at
-          <input
-            type="number"
-            min={40}
-            max={200}
-            step={5}
-            value={config.highPassHz}
-            onChange={(e) => onChange({ highPassHz: Number(e.target.value) })}
-            className="w-16 rounded bg-zinc-800 px-2 py-1 text-sm text-zinc-100"
-          />
-          Hz
+          <span>
+            High-pass filter at{" "}
+            <input
+              type="number"
+              min={40}
+              max={200}
+              step={5}
+              value={config.highPassHz}
+              onChange={(e) => onChange({ highPassHz: Number(e.target.value) })}
+              className="w-16 rounded bg-zinc-800 px-2 py-1 text-sm text-zinc-100"
+              aria-label="High-pass filter frequency in Hz"
+            />{" "}
+            Hz
+          </span>
         </label>
 
-        <label className="flex flex-col gap-1 text-xs text-zinc-400">
-          <span>
+        <div className="flex flex-col gap-1 text-xs text-zinc-400">
+          <label htmlFor="noise-gate">
             Noise gate:{" "}
             <span className="text-zinc-200">{config.minRms.toFixed(3)}</span> RMS
-          </span>
+          </label>
           <input
+            id="noise-gate"
             type="range"
             min={0}
             max={0.1}
@@ -136,14 +147,15 @@ export function InputSettings({
             value={config.minRms}
             onChange={(e) => onChange({ minRms: Number(e.target.value) })}
           />
-        </label>
+        </div>
 
-        <label className="flex flex-col gap-1 text-xs text-zinc-400">
-          <span>
+        <div className="flex flex-col gap-1 text-xs text-zinc-400">
+          <label htmlFor="pitch-confidence">
             Pitch confidence:{" "}
             <span className="text-zinc-200">{config.minClarity.toFixed(2)}</span>
-          </span>
+          </label>
           <input
+            id="pitch-confidence"
             type="range"
             min={0.6}
             max={0.99}
@@ -151,15 +163,26 @@ export function InputSettings({
             value={config.minClarity}
             onChange={(e) => onChange({ minClarity: Number(e.target.value) })}
           />
-        </label>
+        </div>
 
         <label className="flex items-center gap-2 text-xs text-zinc-400 sm:col-span-2">
           <input
+            id="polyphonic"
             type="checkbox"
             checked={config.polyphonic}
             onChange={(e) => onChange({ polyphonic: e.target.checked })}
           />
           Polyphonic mode (chord/chroma detection) &mdash; experimental
+        </label>
+
+        <label className="flex items-center gap-2 text-xs text-zinc-400 sm:col-span-2">
+          <input
+            id="high-contrast"
+            type="checkbox"
+            checked={highContrast}
+            onChange={(e) => onHighContrastChange(e.target.checked)}
+          />
+          High-contrast fretboard (adds patterns for colorblind accessibility)
         </label>
 
         <fieldset className="sm:col-span-2 rounded border border-zinc-800 p-2">

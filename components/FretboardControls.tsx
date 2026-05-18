@@ -8,6 +8,8 @@ type Props = {
   onCenterChange: (fret: number) => void;
   onWindowChange: (w: number) => void;
   numFrets: number;
+  capo: number;
+  onCapoChange: (n: number) => void;
 };
 
 export function FretboardControls({
@@ -18,9 +20,26 @@ export function FretboardControls({
   onCenterChange,
   onWindowChange,
   numFrets,
+  capo,
+  onCapoChange,
 }: Props) {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-zinc-400">
+      <label className="flex items-center gap-2">
+        Capo
+        <select
+          className="rounded bg-zinc-800 px-2 py-1 text-zinc-100"
+          value={capo}
+          onChange={(e) => onCapoChange(Number(e.target.value))}
+        >
+          <option value={0}>None</option>
+          {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => (
+            <option key={n} value={n}>
+              Fret {n}
+            </option>
+          ))}
+        </select>
+      </label>
       <label className="flex items-center gap-2">
         <input
           type="checkbox"

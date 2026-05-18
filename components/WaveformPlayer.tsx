@@ -309,6 +309,7 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
           className="w-full rounded cursor-pointer"
           style={{ height: CANVAS_H }}
           onClick={handleSeek}
+          aria-label="Audio waveform — click to seek"
         />
         {/* Loop region shading */}
         {aFrac != null && bFrac != null && bFrac > aFrac && (

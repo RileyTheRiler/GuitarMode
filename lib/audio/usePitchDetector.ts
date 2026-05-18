@@ -131,11 +131,13 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
   const adaptiveMinRmsRef = useRef<number | null>(null); // null = not yet calibrated
 
   const chromaAccumRef = useRef<number[]>(Array(12).fill(0));
+  const chromaFrameCountRef = useRef(0);
   const chromaDirtyRef = useRef(false);
   const chromaFlushAtRef = useRef(0);
   const levelFlushAtRef = useRef(0);
   const harmonicVectorRef = useRef<number[]>(Array(NUM_HARMONICS).fill(0));
   const harmonicsDirtyRef = useRef(false);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const setConfig = useCallback((patch: Partial<PitchDetectorConfig>) => {
     setConfigState((prev) => {
@@ -170,11 +172,14 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
 
   useEffect(() => {
     if (!configHydratedRef.current || typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
-    } catch (err) {
-      console.warn("usePitchDetector: failed to persist config", err);
-    }
+    if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = setTimeout(() => {
+      try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+      } catch (err) {
+        console.warn("usePitchDetector: failed to persist config", err);
+      }
+    }, 500);
   }, [config]);
 
   // Restore detected notes and chroma from the previous session so a refresh
@@ -376,6 +381,7 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
         const c = computeChroma(fdb, ctx.sampleRate, cfg.a4Hz, cfg.minFreq, cfg.maxFreq);
         const accum = chromaAccumRef.current;
         for (let i = 0; i < 12; i++) accum[i] += c[i];
+        chromaFrameCountRef.current += 1;
         chromaDirtyRef.current = true;
 
         // Harmonic envelope for the currently-active note — reuse freqDb
@@ -389,7 +395,8 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
         if (now - chromaFlushAtRef.current > 100) {
           chromaFlushAtRef.current = now;
           if (chromaDirtyRef.current) {
-            setChromaProfile([...accum]);
+            const count = chromaFrameCountRef.current || 1;
+            setChromaProfile(accum.map((v) => v / count));
             chromaDirtyRef.current = false;
           }
           if (harmonicsDirtyRef.current) {
@@ -433,6 +440,7 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
     calibSamplesRef.current = [];
     adaptiveMinRmsRef.current = null;
     chromaAccumRef.current = Array(12).fill(0);
+    chromaFrameCountRef.current = 0;
     chromaDirtyRef.current = false;
     chromaFlushAtRef.current = performance.now();
     levelFlushAtRef.current = 0;
@@ -549,6 +557,7 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
     setChromaProfile(Array(12).fill(0));
     setHarmonics(Array(NUM_HARMONICS).fill(0));
     chromaAccumRef.current = Array(12).fill(0);
+    chromaFrameCountRef.current = 0;
     chromaDirtyRef.current = false;
     harmonicVectorRef.current = Array(NUM_HARMONICS).fill(0);
     harmonicsDirtyRef.current = false;

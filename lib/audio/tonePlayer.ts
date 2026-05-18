@@ -22,11 +22,51 @@ export function getToneContext(): AudioContext {
  * Schedule a short metronome click at an exact audio-clock time. Using the
  * audio clock (not setTimeout) keeps timing sample-accurate even under GC
  * pauses. Accented beats are higher and a touch louder.
+ *
+ * `style` chooses between a square-wave electronic beep ("electronic") and a
+ * synthesized woodblock-style hit ("wood").
  */
-export function scheduleClick(time: number, accent = false) {
+export function scheduleClick(time: number, accent = false, style: "electronic" | "wood" = "electronic") {
   const ctx = getContext();
   if (ctx.state === "suspended") ctx.resume().catch(() => {});
 
+  if (style === "wood") {
+    // Tonal body: short decaying sine
+    const osc = ctx.createOscillator();
+    const oscGain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = accent ? 900 : 680;
+    oscGain.gain.setValueAtTime(0, time);
+    oscGain.gain.linearRampToValueAtTime(accent ? 0.5 : 0.35, time + 0.001);
+    oscGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.04);
+    osc.connect(oscGain);
+    oscGain.connect(ctx.destination);
+    osc.start(time);
+    osc.stop(time + 0.05);
+
+    // Noise transient for the attack "click"
+    const bufSize = Math.ceil(ctx.sampleRate * 0.025);
+    const noiseBuffer = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+    const data = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
+    const noise = ctx.createBufferSource();
+    noise.buffer = noiseBuffer;
+    const bpf = ctx.createBiquadFilter();
+    bpf.type = "bandpass";
+    bpf.frequency.value = accent ? 2200 : 1600;
+    bpf.Q.value = 1;
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0, time);
+    noiseGain.gain.linearRampToValueAtTime(accent ? 0.3 : 0.2, time + 0.001);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.02);
+    noise.connect(bpf);
+    bpf.connect(noiseGain);
+    noiseGain.connect(ctx.destination);
+    noise.start(time);
+    return;
+  }
+
+  // Electronic (original square-wave)
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
 

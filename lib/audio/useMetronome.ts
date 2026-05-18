@@ -20,19 +20,23 @@ function clampBeats(n: number): number {
   return Math.max(MIN_BEATS, Math.min(MAX_BEATS, Math.round(n)));
 }
 
-type Persisted = { bpm?: number; beatsPerBar?: number };
+type ClickStyle = "electronic" | "wood";
+type Persisted = { bpm?: number; beatsPerBar?: number; clickStyle?: ClickStyle };
 
 export function useMetronome() {
   const [playing, setPlaying] = useState(false);
   const [bpm, setBpmState] = useState(100);
   const [beatsPerBar, setBeatsPerBarState] = useState(4);
+  const [clickStyle, setClickStyleState] = useState<ClickStyle>("electronic");
   // 1-based beat index for display; 0 means "not playing".
   const [currentBeat, setCurrentBeat] = useState(0);
 
   const bpmRef = useRef(bpm);
   const beatsRef = useRef(beatsPerBar);
+  const clickStyleRef = useRef(clickStyle);
   bpmRef.current = bpm;
   beatsRef.current = beatsPerBar;
+  clickStyleRef.current = clickStyle;
 
   // Scheduler state lives in refs so changes don't tear the setInterval loop.
   const playingRef = useRef(false);
@@ -45,6 +49,7 @@ export function useMetronome() {
   // Hydrate persisted settings. Gated ref so the first write doesn't clobber
   // storage before we read it on mount.
   const hydratedRef = useRef(false);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (typeof window === "undefined") {
       hydratedRef.current = true;
@@ -58,6 +63,9 @@ export function useMetronome() {
         if (typeof parsed.beatsPerBar === "number") {
           setBeatsPerBarState(clampBeats(parsed.beatsPerBar));
         }
+        if (parsed.clickStyle === "wood" || parsed.clickStyle === "electronic") {
+          setClickStyleState(parsed.clickStyle);
+        }
       }
     } catch (err) {
       console.warn("useMetronome: failed to read persisted settings", err);
@@ -67,15 +75,18 @@ export function useMetronome() {
 
   useEffect(() => {
     if (!hydratedRef.current || typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ bpm, beatsPerBar } satisfies Persisted)
-      );
-    } catch (err) {
-      console.warn("useMetronome: failed to persist settings", err);
-    }
-  }, [bpm, beatsPerBar]);
+    if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = setTimeout(() => {
+      try {
+        window.localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify({ bpm, beatsPerBar, clickStyle } satisfies Persisted)
+        );
+      } catch (err) {
+        console.warn("useMetronome: failed to persist settings", err);
+      }
+    }, 500);
+  }, [bpm, beatsPerBar, clickStyle]);
 
   const tick = useCallback(() => {
     const ctx = getToneContext();
@@ -84,7 +95,7 @@ export function useMetronome() {
     while (nextNoteTimeRef.current < now + LOOKAHEAD_S) {
       const beatsInBar = beatsRef.current;
       const zeroBasedBeat = beatCounterRef.current % beatsInBar;
-      scheduleClick(nextNoteTimeRef.current, zeroBasedBeat === 0);
+      scheduleClick(nextNoteTimeRef.current, zeroBasedBeat === 0, clickStyleRef.current);
       pendingBeatsRef.current.push({
         time: nextNoteTimeRef.current,
         beat: zeroBasedBeat + 1,
@@ -132,11 +143,29 @@ export function useMetronome() {
     else start();
   }, [start, stop]);
 
+  const tapTimesRef = useRef<number[]>([]);
+  const tap = useCallback(() => {
+    const now = Date.now();
+    // Drop taps older than 3 seconds.
+    tapTimesRef.current = tapTimesRef.current.filter((t) => now - t < 3000);
+    tapTimesRef.current.push(now);
+    if (tapTimesRef.current.length >= 2) {
+      const times = tapTimesRef.current;
+      let totalInterval = 0;
+      for (let i = 1; i < times.length; i++) totalInterval += times[i] - times[i - 1];
+      const avgInterval = totalInterval / (times.length - 1);
+      setBpmState(clampBpm(Math.round(60000 / avgInterval)));
+    }
+    // Keep only last 8 taps.
+    if (tapTimesRef.current.length > 8) tapTimesRef.current.shift();
+  }, []);
+
   const setBpm = useCallback((next: number) => setBpmState(clampBpm(next)), []);
   const setBeatsPerBar = useCallback(
     (next: number) => setBeatsPerBarState(clampBeats(next)),
     []
   );
+  const setClickStyle = useCallback((s: ClickStyle) => setClickStyleState(s), []);
 
   useEffect(() => {
     return () => {
@@ -148,11 +177,14 @@ export function useMetronome() {
     playing,
     bpm,
     beatsPerBar,
+    clickStyle,
     currentBeat,
     start,
     stop,
     toggle,
     setBpm,
     setBeatsPerBar,
+    setClickStyle,
+    tap,
   };
 }

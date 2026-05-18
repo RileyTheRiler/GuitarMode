@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DEMO_PROGRESSION, type ChordEvent } from "@/lib/music/progression";
 import { parseChord } from "@/lib/music/chords";
 import { useProgressionPlayer } from "@/lib/audio/useProgressionPlayer";
@@ -13,6 +13,41 @@ type Props = {
   onPlaybackChordChange?: (chord: ChordEvent | null) => void;
 };
 
+const MAX_EVENTS = 500;
+
+const PRESET_PROGRESSIONS: Record<string, ChordEvent[]> = {
+  "I–IV–V–I (G major)": [
+    { time: 0, chord: "G" }, { time: 2, chord: "C" },
+    { time: 4, chord: "D" }, { time: 6, chord: "G" },
+  ],
+  "I–V–vi–IV (G major, pop)": [
+    { time: 0, chord: "G" }, { time: 2, chord: "D" },
+    { time: 4, chord: "Em" }, { time: 6, chord: "C" },
+    { time: 8, chord: "G" }, { time: 10, chord: "D" },
+    { time: 12, chord: "Em" }, { time: 14, chord: "C" },
+  ],
+  "ii–V–I (A minor jazz)": [
+    { time: 0, chord: "Bm7" }, { time: 2, chord: "E7" },
+    { time: 4, chord: "Amaj7" }, { time: 6, chord: "Amaj7" },
+  ],
+  "12-bar blues (A)": [
+    { time: 0, chord: "A7" }, { time: 4, chord: "A7" },
+    { time: 8, chord: "A7" }, { time: 12, chord: "A7" },
+    { time: 16, chord: "D7" }, { time: 20, chord: "D7" },
+    { time: 24, chord: "A7" }, { time: 28, chord: "A7" },
+    { time: 32, chord: "E7" }, { time: 36, chord: "D7" },
+    { time: 40, chord: "A7" }, { time: 44, chord: "E7" },
+  ],
+  "Andalusian cadence (Am)": [
+    { time: 0, chord: "Am" }, { time: 2, chord: "G" },
+    { time: 4, chord: "F" }, { time: 6, chord: "E" },
+  ],
+  "I–vi–IV–V (C major, 50s)": [
+    { time: 0, chord: "C" }, { time: 2, chord: "Am" },
+    { time: 4, chord: "F" }, { time: 6, chord: "G" },
+  ],
+};
+
 function stringify(p: ChordEvent[]): string {
   if (p.length === 0) return "";
   return JSON.stringify(p, null, 2);
@@ -20,6 +55,9 @@ function stringify(p: ChordEvent[]): string {
 
 function validate(parsed: unknown): { ok: true; value: ChordEvent[] } | { ok: false; error: string } {
   if (!Array.isArray(parsed)) return { ok: false, error: "Expected an array of { time, chord } objects" };
+  if (parsed.length > MAX_EVENTS) {
+    return { ok: false, error: `Too many events (max ${MAX_EVENTS})` };
+  }
   const result: ChordEvent[] = [];
   for (let i = 0; i < parsed.length; i++) {
     const ev = parsed[i] as { time?: unknown; chord?: unknown };
@@ -47,6 +85,7 @@ export function ProgressionEditor({
   const [text, setText] = useState<string>(() => stringify(progression));
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const player = useProgressionPlayer();
 
   // Stop playback if the user edits or clears the chord list mid-play.
@@ -89,18 +128,56 @@ export function ProgressionEditor({
     onChange(res.value);
   };
 
-  const loadDemo = () => {
-    const raw = stringify(DEMO_PROGRESSION);
+  const loadPreset = (events: ChordEvent[]) => {
+    const raw = stringify(events);
     setText(raw);
     setError(null);
-    onChange(DEMO_PROGRESSION);
+    onChange(events);
     setOpen(true);
   };
+
+  const loadDemo = () => loadPreset(DEMO_PROGRESSION);
 
   const clear = () => {
     setText("");
     setError(null);
     onChange([]);
+  };
+
+  const handleExport = () => {
+    if (progression.length === 0) return;
+    const blob = new Blob([JSON.stringify(progression, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "chord-progression.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    file.text().then((raw) => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        setError("Import failed: invalid JSON file");
+        return;
+      }
+      const res = validate(parsed);
+      if (!res.ok) {
+        setError(`Import failed: ${res.error}`);
+        return;
+      }
+      const raw2 = stringify(res.value);
+      setText(raw2);
+      setError(null);
+      onChange(res.value);
+      setOpen(true);
+    });
   };
 
   return (
@@ -123,6 +200,22 @@ export function ProgressionEditor({
             </span>
           )}
           <span className="text-zinc-500">{progression.length} chord{progression.length === 1 ? "" : "s"}</span>
+
+          <select
+            className="rounded px-2 py-1 bg-zinc-800 text-zinc-200 text-xs"
+            value=""
+            onChange={(e) => {
+              const preset = PRESET_PROGRESSIONS[e.target.value];
+              if (preset) loadPreset(preset);
+            }}
+            aria-label="Load a preset progression"
+          >
+            <option value="" disabled>Presets…</option>
+            {Object.keys(PRESET_PROGRESSIONS).map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+
           <button
             type="button"
             onClick={handleTogglePlay}
@@ -141,8 +234,27 @@ export function ProgressionEditor({
             onClick={loadDemo}
             className="rounded px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200"
           >
-            Load demo
+            Demo
           </button>
+          {progression.length > 0 && (
+            <button
+              type="button"
+              onClick={handleExport}
+              title="Download as JSON"
+              className="rounded px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200"
+            >
+              Export
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            title="Import from JSON file"
+            className="rounded px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200"
+          >
+            Import
+          </button>
+          <input ref={fileInputRef} type="file" accept=".json,application/json" className="hidden" onChange={handleImport} />
           <button
             type="button"
             onClick={clear}

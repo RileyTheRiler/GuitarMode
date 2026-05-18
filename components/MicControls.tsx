@@ -10,10 +10,12 @@ type Props = {
   onUpload: (file: File) => void;
   onStartRecording: () => void;
   onStopRecording: () => void;
+  onExportMidi?: () => void;
   recording: boolean;
   analyzing: boolean;
   level: number;
   error?: string | null;
+  hasNotes?: boolean;
 };
 
 export function MicControls({
@@ -23,10 +25,12 @@ export function MicControls({
   onUpload,
   onStartRecording,
   onStopRecording,
+  onExportMidi,
   recording,
   analyzing,
   level,
   error,
+  hasNotes = false,
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -45,6 +49,8 @@ export function MicControls({
         <button
           type="button"
           onClick={onToggleMic}
+          aria-pressed={micOn}
+          title="Toggle microphone (Space)"
           className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 ${
             micOn
               ? "bg-emerald-500 text-zinc-950 hover:bg-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.35)]"
@@ -62,6 +68,7 @@ export function MicControls({
           type="button"
           onClick={recording ? onStopRecording : onStartRecording}
           disabled={!micOn && !recording}
+          title={recording ? "Stop recording" : "Record sample (R)"}
           className={`inline-flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
             recording
               ? "bg-rose-600 text-white hover:bg-rose-500"
@@ -100,9 +107,21 @@ export function MicControls({
           onChange={handleFileChange}
         />
 
+        {onExportMidi && hasNotes && (
+          <button
+            type="button"
+            onClick={onExportMidi}
+            title="Export detected notes as MIDI file"
+            className="rounded-md bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-100 transition hover:bg-zinc-700"
+          >
+            Export MIDI
+          </button>
+        )}
+
         <button
           type="button"
           onClick={onReset}
+          title="Reset all notes (Escape)"
           className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 bg-transparent px-3 py-2.5 text-sm font-medium text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-200"
         >
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
@@ -115,7 +134,7 @@ export function MicControls({
         {micOn && <LevelMeter level={level} />}
       </div>
 
-      <div className="text-xs text-zinc-400">
+      <div className="text-xs text-zinc-400" aria-live="polite">
         {recording && (
           <span className="inline-flex items-center gap-1.5 text-rose-400">
             <span className="relative flex h-2 w-2">
@@ -127,7 +146,11 @@ export function MicControls({
         )}
         {analyzing && !recording && <span>Analyzing…</span>}
         {fileName && !analyzing && !recording && <span>Loaded: {fileName}</span>}
-        {error && <span className="text-rose-400">{error}</span>}
+        {error && (
+          <span role="alert" className="text-rose-400">
+            {error}
+          </span>
+        )}
       </div>
     </div>
   );

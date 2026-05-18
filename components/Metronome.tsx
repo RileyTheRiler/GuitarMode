@@ -65,6 +65,15 @@ export function Metronome() {
           {m.playing ? "Stop" : "Start"}
         </button>
 
+        <button
+          type="button"
+          onClick={m.tap}
+          title="Tap to set BPM — tap at least twice"
+          className="rounded-md bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-100 transition hover:bg-zinc-700 active:scale-95"
+        >
+          Tap
+        </button>
+
         <label className="flex items-center gap-2 text-xs text-zinc-400">
           BPM
           <input
@@ -101,6 +110,18 @@ export function Metronome() {
                 {n}
               </option>
             ))}
+          </select>
+        </label>
+
+        <label className="flex items-center gap-2 text-xs text-zinc-400">
+          Click
+          <select
+            value={m.clickStyle}
+            onChange={(e) => m.setClickStyle(e.target.value as "electronic" | "wood")}
+            className="rounded bg-zinc-800 px-2 py-1 text-sm text-zinc-100"
+          >
+            <option value="electronic">Electronic</option>
+            <option value="wood">Woodblock</option>
           </select>
         </label>
       </div>
