@@ -18,6 +18,7 @@ import { TimbreVisualizer } from "@/components/TimbreVisualizer";
 import { Tuner } from "@/components/Tuner";
 import { SoloGenerator } from "@/components/SoloGenerator";
 import { RiffGenerator } from "@/components/RiffGenerator";
+import { SoloGuide } from "@/components/SoloGuide";
 import { useMicStream } from "@/lib/audio/useMicStream";
 import { usePitchDetector, type DetectedNote } from "@/lib/audio/usePitchDetector";
 import { analyzeAudioBuffer, decodeArrayBuffer } from "@/lib/audio/analyzeBuffer";
@@ -36,6 +37,8 @@ import { downloadMidi } from "@/lib/export/midi";
 import { diatonicTriads } from "@/lib/music/diatonicChords";
 import { findVoicings, type Voicing } from "@/lib/guitar/chordVoicings";
 import { DiatonicChords } from "@/components/DiatonicChords";
+import { SCALE_TEMPLATES } from "@/lib/music/scales";
+import { soloScalePitchClasses } from "@/lib/music/soloGuide";
 
 const NUM_FRETS = 22;
 const TUNING_STORAGE_KEY = "guitarmode:tuning:v1";
@@ -186,6 +189,9 @@ export default function Home() {
   const [waveformChord, setWaveformChord] = useState<ChordEvent | null>(null);
   const [playbackChord, setPlaybackChord] = useState<ChordEvent | null>(null);
   const currentChord = playbackChord ?? waveformChord;
+
+  const [soloRoot, setSoloRoot] = useState(0); // C
+  const [soloScaleIdx, setSoloScaleIdx] = useState(8); // Minor Pentatonic
 
   const setProgression = useCallback((next: ChordEvent[]) => {
     const sorted = sortProgression(next);
@@ -401,8 +407,8 @@ export default function Home() {
   }, [detector]);
 
   const scaleSet = useMemo(
-    () => (selected ? new Set(selected.scale) : undefined),
-    [selected]
+    () => soloScalePitchClasses(soloRoot, SCALE_TEMPLATES[soloScaleIdx]),
+    [soloRoot, soloScaleIdx]
   );
 
   const degreeMap = useMemo(() => {
@@ -645,6 +651,17 @@ export default function Home() {
         />
       </section>
 
+      <section className="mb-4 sm:mb-6">
+        <SoloGuide
+          root={soloRoot}
+          scaleIdx={soloScaleIdx}
+          chordInfo={chordInfo}
+          currentChord={currentChord?.chord ?? null}
+          onRootChange={setSoloRoot}
+          onScaleIdxChange={setSoloScaleIdx}
+        />
+      </section>
+
       <section className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] p-3 sm:p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-xs font-semibold uppercase tracking-widest text-zinc-500 flex items-center gap-2 before:content-[''] before:block before:h-[3px] before:w-1 before:rounded-full before:bg-emerald-500/70 before:shrink-0">
@@ -689,7 +706,7 @@ export default function Home() {
           voicingPositions={activeVoicing ?? undefined}
           playedPitchClasses={playedPitchClasses}
           scalePitchClasses={riffPitchClasses ?? scaleSet}
-          rootPitchClass={riffRoot ?? selected?.root ?? null}
+          rootPitchClass={riffRoot ?? soloRoot}
           currentPitchClass={riffPlayingPc ?? detector.currentNote?.pitchClass ?? null}
           chordPitchClasses={chordInfo?.all}
           chordRootPitchClass={chordInfo?.root ?? null}
