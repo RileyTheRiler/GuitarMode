@@ -43,6 +43,7 @@ export function detectChords(profile: PitchClassProfile, topN = 5): ChordMatch[]
         quality,
         displayName: `${rootName}${suffix}`,
         score,
+        // Best-case: all notes match chord tones (+1×) plus root bonus (+0.5×) ≈ 1.5× totalWeight.
         confidence: Math.max(0, Math.min(1, score / (totalWeight * 1.5))),
       });
     }

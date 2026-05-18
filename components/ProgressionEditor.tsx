@@ -165,11 +165,13 @@ export function ProgressionEditor({
         parsed = JSON.parse(raw);
       } catch {
         setError("Import failed: invalid JSON file");
+        setOpen(true);
         return;
       }
       const res = validate(parsed);
       if (!res.ok) {
         setError(`Import failed: ${res.error}`);
+        setOpen(true);
         return;
       }
       const raw2 = stringify(res.value);

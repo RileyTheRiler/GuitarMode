@@ -146,6 +146,8 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
   const setConfig = useCallback((patch: Partial<PitchDetectorConfig>) => {
     setConfigState((prev) => {
       const next = { ...prev, ...patch };
+      // Clamp A4 to a musically valid concert pitch range.
+      if (next.a4Hz != null) next.a4Hz = Math.max(415, Math.min(466, next.a4Hz));
       const hp = highPassRef.current;
       if (hp) {
         hp.frequency.value = next.highPass ? next.highPassHz : 20;
