@@ -60,6 +60,8 @@ export function detectScales(profile: PitchClassProfile, topN = 5): ScaleMatch[]
       const scaleArr = Array.from(scaleSet).sort((a, b) => a - b);
       const missing = scaleArr.filter((pc) => profile[pc] <= 0);
 
+      // Best-case: every note in-scale (+1×), root bonus (+0.75×), fifth bonus
+      // (+0.25×) — roughly 2× totalWeight. Used as a normalizing denominator.
       const bestPossible = totalWeight * 2;
       const confidence = Math.max(0, Math.min(1, score / bestPossible));
 

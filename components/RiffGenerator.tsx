@@ -470,7 +470,19 @@ export function RiffGenerator({ onRiffNotes, onRiffNoteActive }: Props) {
         {loading ? "Generating…" : "Generate riff"}
       </button>
 
-      {apiError && <p className="mb-3 text-xs text-rose-400">{apiError}</p>}
+      {apiError && (
+        <div className="mb-3 flex items-center gap-3">
+          <p className="text-xs text-rose-400">{apiError}</p>
+          <button
+            type="button"
+            onClick={handleGenerate}
+            disabled={loading || !song}
+            className="shrink-0 rounded-md bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-300 transition hover:bg-zinc-700 disabled:opacity-50"
+          >
+            Try again
+          </button>
+        </div>
+      )}
 
       {/* Results */}
       {result && (
