@@ -16,11 +16,12 @@ export function ChromaChart({ chroma }: Props) {
   const totalW = 12 * (BAR_W + GAP) - GAP;
 
   return (
-    <div className="flex flex-col items-start">
+    <div className="w-full">
       <p className="mb-1 text-xs text-zinc-500">Pitch-class energy (live)</p>
       <svg
-        width={totalW}
-        height={CHART_H + LABEL_H}
+        viewBox={`0 0 ${totalW} ${CHART_H + LABEL_H}`}
+        width="100%"
+        style={{ display: "block", maxWidth: `${totalW}px` }}
         aria-label="Pitch-class energy chart"
       >
         {chroma.map((v, pc) => {

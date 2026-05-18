@@ -16,6 +16,8 @@ export type AnalyzeOptions = {
   hopSize?: number;
   a4Hz?: number;
   polyphonic?: boolean;
+  highPass?: boolean;
+  highPassHz?: number;
 };
 
 const DEFAULTS: Required<AnalyzeOptions> = {
@@ -29,6 +31,8 @@ const DEFAULTS: Required<AnalyzeOptions> = {
   hopSize: 1024,
   a4Hz: DEFAULT_A4_HZ,
   polyphonic: false,
+  highPass: true,
+  highPassHz: 80,
 };
 
 export type AnalyzeResult = {
@@ -66,6 +70,7 @@ function highPassInPlace(data: Float32Array, sampleRate: number, cutoffHz: numbe
   }
 }
 
+/** Bandwise RMS flux across 4 sub-bands (same formula as the live path). */
 function computeFlux(frame: Float32Array, prev: Float32Array): number {
   const band = frame.length >> 2;
   let flux = 0;
@@ -85,8 +90,14 @@ function computeFlux(frame: Float32Array, prev: Float32Array): number {
 const CALIB_FRAMES = 43;
 const CALIB_MULTIPLIER = 3;
 const HYSTERESIS_RATIO = 0.5;
+const CLARITY_HYSTERESIS_RATIO = 0.85;
 const ONSET_FLUX_THRESHOLD = 0.015;
 
+/**
+ * Offline analysis of an AudioBuffer. Mirrors the live detector's state
+ * machine: adaptive noise gate, octave correction, spectral-flux onset
+ * detection, confirmation + duration tracking on release, optional chroma.
+ */
 export async function analyzeAudioBuffer(
   buffer: AudioBuffer,
   opts: AnalyzeOptions = {},
@@ -95,7 +106,9 @@ export async function analyzeAudioBuffer(
   const cfg = { ...DEFAULTS, ...opts };
   const sampleRate = buffer.sampleRate;
   const mono = mixToMono(buffer).slice();
-  highPassInPlace(mono, sampleRate, 80);
+  if (cfg.highPass) {
+    highPassInPlace(mono, sampleRate, cfg.highPassHz);
+  }
 
   const detector = PitchDetector.forFloat32Array(cfg.frameSize);
   const frame = new Float32Array(
@@ -118,8 +131,8 @@ export async function analyzeAudioBuffer(
   }
   const chromaAccum: number[] = Array(12).fill(0);
 
-  let calibCount = 0;
-  let calibRmsAccum = 0;
+  // Adaptive gate calibration state (25th-percentile baseline of early RMS)
+  const calibSamples: number[] = [];
   let adaptiveMinRms: number | null = null;
 
   let activeMidi: number | null = null;
@@ -135,6 +148,10 @@ export async function analyzeAudioBuffer(
 
   const finalize = (endMs: number) => {
     if (activeMidi == null) return;
+    // Prefer the last frame where audio was present; endMs is the release
+    // point (after ~silenceFramesToRelease of silence) and overstates
+    // duration by roughly silenceFramesToRelease * hop/sr seconds.
+    const end = activeEnd > 0 ? activeEnd : endMs;
     notes.push({
       midi: activeMidi,
       noteName: midiToNoteName(activeMidi),
@@ -142,8 +159,8 @@ export async function analyzeAudioBuffer(
       frequency: activeFreq,
       clarity: activeClarity,
       at: activeStart,
-      endAt: Math.max(endMs, activeEnd),
-      durationMs: Math.max(0, Math.max(endMs, activeEnd) - activeStart),
+      endAt: end,
+      durationMs: Math.max(0, end - activeStart),
     });
     activeMidi = null;
   };
@@ -160,17 +177,20 @@ export async function analyzeAudioBuffer(
     for (let i = 0; i < frame.length; i++) sumSq += frame[i] * frame[i];
     const rms = Math.sqrt(sumSq / frame.length);
 
-    if (calibCount < CALIB_FRAMES) {
-      calibCount += 1;
-      calibRmsAccum += rms;
-      if (calibCount === CALIB_FRAMES) {
-        const baseline = calibRmsAccum / CALIB_FRAMES;
+    // Adaptive noise gate calibration — 25th percentile is robust to the
+    // user playing a note during the calibration window.
+    if (calibSamples.length < CALIB_FRAMES) {
+      calibSamples.push(rms);
+      if (calibSamples.length === CALIB_FRAMES) {
+        const sorted = calibSamples.slice().sort((a, b) => a - b);
+        const baseline = sorted[Math.floor(sorted.length * 0.25)];
         adaptiveMinRms = Math.max(cfg.minRms, baseline * CALIB_MULTIPLIER);
       }
     }
     const effectiveMinRms = adaptiveMinRms ?? cfg.minRms;
     const releaseThreshold = activeMidi != null ? effectiveMinRms * HYSTERESIS_RATIO : effectiveMinRms;
 
+    // Spectral flux onset detection
     let onsetDetected = false;
     if (prevFrame) {
       onsetDetected = computeFlux(frame, prevFrame) > ONSET_FLUX_THRESHOLD;
@@ -180,12 +200,15 @@ export async function analyzeAudioBuffer(
 
     const [rawFreq, clarity] = detector.findPitch(frame, sampleRate);
     const freq = octaveCorrect(frame, rawFreq, sampleRate, cfg.minFreq);
+
     const confirmThreshold = onsetDetected ? 1 : cfg.framesToConfirm;
 
     const onsetMinRms = activeMidi != null ? releaseThreshold : effectiveMinRms;
+    const clarityThreshold =
+      activeMidi != null ? cfg.minClarity * CLARITY_HYSTERESIS_RATIO : cfg.minClarity;
     const passes =
       rms >= onsetMinRms &&
-      clarity >= cfg.minClarity &&
+      clarity >= clarityThreshold &&
       freq >= cfg.minFreq &&
       freq <= cfg.maxFreq;
 
@@ -213,7 +236,7 @@ export async function analyzeAudioBuffer(
         }
       }
     } else {
-      if (rms < releaseThreshold || !passes) silenceFrames += 1;
+      if (rms < releaseThreshold) silenceFrames += 1;
       if (silenceFrames >= cfg.silenceFramesToRelease && activeMidi != null) {
         finalize(frameAtMs);
         candidateMidi = null;
@@ -246,6 +269,7 @@ export async function analyzeAudioBuffer(
   };
 }
 
+/** Decode an ArrayBuffer (from a File or Blob) into an AudioBuffer. */
 export async function decodeArrayBuffer(arr: ArrayBuffer): Promise<AudioBuffer> {
   const AudioCtx =
     window.AudioContext ||

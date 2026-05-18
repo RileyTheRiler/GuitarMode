@@ -23,21 +23,21 @@ describe("buildProfile", () => {
   });
 
   it("credits each note by durationMs", () => {
-    const notes = [makeNote(0, 500), makeNote(0, 300)];
+    const notes = [makeNote(0, 500), makeNote(0, 300)]; // two C notes
     const p = buildProfile(notes);
     expect(p[0]).toBe(800);
   });
 
   it("applies a minimum duration of 80 ms per note", () => {
-    const notes = [makeNote(4, 0)];
+    const notes = [makeNote(4, 0)]; // zero-duration note
     const p = buildProfile(notes);
     expect(p[4]).toBe(80);
   });
 
   it("blends chroma contribution proportionally", () => {
-    const notes = [makeNote(0, 1000)];
+    const notes = [makeNote(0, 1000)]; // 1000 ms on C
     const chroma = Array(12).fill(0);
-    chroma[7] = 100;
+    chroma[7] = 100; // G has chroma energy
     const p = buildProfile(notes, chroma, 1);
     expect(p[0]).toBeGreaterThan(0);
     expect(p[7]).toBeGreaterThan(0);

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { octaveCorrect } from "./octaveCorrect";
 
 const SAMPLE_RATE = 44100;
@@ -33,6 +33,13 @@ describe("octaveCorrect — pass-through conditions", () => {
     // This documents the current behavior: degenerate input still "corrects"
     expect(typeof result).toBe("number");
   });
+
+  it("does not throw when the half-period exceeds the frame length", () => {
+    // Very low freq at small frame; halfPeriod >= frame.length should bail.
+    const shortFrame = makeSine(220, SAMPLE_RATE, 64);
+    expect(() => octaveCorrect(shortFrame, 200, SAMPLE_RATE, 70)).not.toThrow();
+    expect(octaveCorrect(shortFrame, 200, SAMPLE_RATE, 70)).toBe(200);
+  });
 });
 
 describe("octaveCorrect — octave correction", () => {
@@ -51,6 +58,12 @@ describe("octaveCorrect — octave correction", () => {
     const result = octaveCorrect(frame, 164.8, SAMPLE_RATE, 70);
     expect(result).toBeCloseTo(82.4, 0);
   });
+
+  it("drops to the lower octave when a clean sine is reported one octave high", () => {
+    const frame = makeSine(440, SAMPLE_RATE, 4096);
+    const out = octaveCorrect(frame, 880, SAMPLE_RATE, 70);
+    expect(out).toBeCloseTo(440, 6);
+  });
 });
 
 describe("octaveCorrect — frequency range guards", () => {
@@ -66,5 +79,13 @@ describe("octaveCorrect — frequency range guards", () => {
     const frame = makeSine(440, SAMPLE_RATE, 2048);
     const result = octaveCorrect(frame, 440, SAMPLE_RATE, 70);
     expect(Number.isFinite(result)).toBe(true);
+  });
+
+  it("returns input freq for non-positive or non-finite input", () => {
+    const frame = makeSine(220, SAMPLE_RATE, 2048);
+    expect(octaveCorrect(frame, 0, SAMPLE_RATE, 70)).toBe(0);
+    expect(octaveCorrect(frame, -10, SAMPLE_RATE, 70)).toBe(-10);
+    expect(octaveCorrect(frame, NaN, SAMPLE_RATE, 70)).toBeNaN();
+    expect(octaveCorrect(frame, Infinity, SAMPLE_RATE, 70)).toBe(Infinity);
   });
 });

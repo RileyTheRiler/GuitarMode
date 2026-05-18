@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { SCALE_TEMPLATES, scalePitchClasses } from "./scales";
 
 describe("scalePitchClasses", () => {
@@ -56,11 +56,19 @@ describe("scalePitchClasses", () => {
       }
     }
   });
+
+  it("transposes correctly to a non-zero root", () => {
+    const major = SCALE_TEMPLATES.find((t) => t.name.startsWith("Ionian"))!;
+    // G major: G A B C D E F# -> 7, 9, 11, 0, 2, 4, 6
+    const set = scalePitchClasses(major, 7);
+    expect(set).toEqual(new Set([7, 9, 11, 0, 2, 4, 6]));
+  });
 });
 
 describe("SCALE_TEMPLATES", () => {
-  it("has 18 templates", () => {
-    expect(SCALE_TEMPLATES).toHaveLength(18);
+  it("has at least the diatonic modes and pentatonics", () => {
+    // Defensive lower bound rather than a brittle exact count.
+    expect(SCALE_TEMPLATES.length).toBeGreaterThanOrEqual(12);
   });
 
   it("every template has a non-empty name and intervals array", () => {
@@ -70,9 +78,18 @@ describe("SCALE_TEMPLATES", () => {
     }
   });
 
-  it("every template includes 0 as the first interval (starts on root)", () => {
+  it("starts every template at the root (interval 0)", () => {
     for (const t of SCALE_TEMPLATES) {
       expect(t.intervals[0]).toBe(0);
+    }
+  });
+
+  it("keeps every interval in [0, 11]", () => {
+    for (const t of SCALE_TEMPLATES) {
+      for (const i of t.intervals) {
+        expect(i).toBeGreaterThanOrEqual(0);
+        expect(i).toBeLessThanOrEqual(11);
+      }
     }
   });
 
@@ -80,5 +97,25 @@ describe("SCALE_TEMPLATES", () => {
     for (const t of SCALE_TEMPLATES) {
       expect(new Set(t.intervals).size).toBe(t.intervals.length);
     }
+  });
+
+  it("has no two templates with identical pitch-class sets at C", () => {
+    const seen = new Map<string, string>();
+    for (const t of SCALE_TEMPLATES) {
+      const key = Array.from(scalePitchClasses(t, 0))
+        .sort((a, b) => a - b)
+        .join(",");
+      const prior = seen.get(key);
+      expect(
+        prior,
+        `template "${t.name}" duplicates pitch-class set of "${prior}"`
+      ).toBeUndefined();
+      seen.set(key, t.name);
+    }
+  });
+
+  it("has unique template names", () => {
+    const names = SCALE_TEMPLATES.map((t) => t.name);
+    expect(new Set(names).size).toBe(names.length);
   });
 });

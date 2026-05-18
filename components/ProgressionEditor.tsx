@@ -1,13 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { DEMO_PROGRESSION, type ChordEvent } from "@/lib/music/progression";
 import { parseChord } from "@/lib/music/chords";
+import { useProgressionPlayer } from "@/lib/audio/useProgressionPlayer";
 
 type Props = {
   progression: ChordEvent[];
   onChange: (next: ChordEvent[]) => void;
   currentChord?: string | null;
+  a4Hz?: number;
+  onPlaybackChordChange?: (chord: ChordEvent | null) => void;
 };
 
 function stringify(p: ChordEvent[]): string {
@@ -34,10 +37,34 @@ function validate(parsed: unknown): { ok: true; value: ChordEvent[] } | { ok: fa
   return { ok: true, value: result };
 }
 
-export function ProgressionEditor({ progression, onChange, currentChord }: Props) {
+export function ProgressionEditor({
+  progression,
+  onChange,
+  currentChord,
+  a4Hz = 440,
+  onPlaybackChordChange,
+}: Props) {
   const [text, setText] = useState<string>(() => stringify(progression));
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  const player = useProgressionPlayer();
+
+  // Stop playback if the user edits or clears the chord list mid-play.
+  useEffect(() => {
+    if (player.playing) player.stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [progression]);
+
+  // Surface the playback's currently-sounding chord so the fretboard can
+  // highlight chord tones in sync.
+  useEffect(() => {
+    onPlaybackChordChange?.(player.currentChord);
+  }, [player.currentChord, onPlaybackChordChange]);
+
+  const handleTogglePlay = () => {
+    if (player.playing) player.stop();
+    else player.play(progression, a4Hz);
+  };
 
   const apply = (raw: string) => {
     setText(raw);
@@ -96,6 +123,19 @@ export function ProgressionEditor({ progression, onChange, currentChord }: Props
             </span>
           )}
           <span className="text-zinc-500">{progression.length} chord{progression.length === 1 ? "" : "s"}</span>
+          <button
+            type="button"
+            onClick={handleTogglePlay}
+            disabled={progression.length === 0}
+            aria-pressed={player.playing}
+            className={`rounded px-2 py-1 transition disabled:cursor-not-allowed disabled:opacity-50 ${
+              player.playing
+                ? "bg-emerald-500 text-zinc-950 hover:bg-emerald-400"
+                : "bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
+            }`}
+          >
+            {player.playing ? "Stop" : "Play"}
+          </button>
           <button
             type="button"
             onClick={loadDemo}

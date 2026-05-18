@@ -6,6 +6,9 @@ import { DEFAULT_A4_HZ, freqToMidi, midiToNoteName, midiToPitchClass } from "../
 import { computeChroma } from "./chroma";
 import { radix2FFT } from "./fft";
 import { octaveCorrect } from "./octaveCorrect";
+import { extractHarmonics, normalizeHarmonics } from "./timbre";
+
+const NUM_HARMONICS = 8;
 
 export type DetectedNote = {
   midi: number;
@@ -44,14 +47,25 @@ export const DEFAULT_CONFIG: PitchDetectorConfig = {
   silenceFramesToRelease: 10,
 };
 
+const STORAGE_KEY = "guitarmode:detector-config:v1";
+const SESSION_STORAGE_KEY = "guitarmode:session:v1";
+
 const FRAME_SIZE = 2048;
 const HOP_SIZE = 1024;
 
+// Frames needed to calibrate the adaptive noise gate (~1 s at 44.1 kHz / 1024 hop)
 const CALIB_FRAMES = 43;
+// Multiplier over baseline RMS to use as the onset gate
 const CALIB_MULTIPLIER = 3;
+// When a note is active, require RMS to fall below this fraction of minRms before releasing
 const HYSTERESIS_RATIO = 0.5;
+// While a note is active, accept lower clarity to avoid truncating sustained
+// notes whose YIN clarity momentarily dips (vibrato, string noise, bow noise).
+const CLARITY_HYSTERESIS_RATIO = 0.85;
+// Spectral-flux onset: accept a note after 1 frame when band-flux exceeds this
 const ONSET_FLUX_THRESHOLD = 0.015;
 
+/** Bandwise RMS flux: compares 4 equal sub-bands between current and previous frame. */
 function computeFlux(frame: Float32Array, prev: Float32Array): number {
   const band = frame.length >> 2;
   let flux = 0;
@@ -78,11 +92,13 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
   const [level, setLevel] = useState(0);
   const [notes, setNotes] = useState<DetectedNote[]>([]);
   const [chromaProfile, setChromaProfile] = useState<number[]>(() => Array(12).fill(0));
+  const [harmonics, setHarmonics] = useState<number[]>(() => Array(NUM_HARMONICS).fill(0));
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const highPassRef = useRef<BiquadFilterNode | null>(null);
   const workletRef = useRef<AudioWorkletNode | null>(null);
+  // Fallback path when AudioWorklet is unavailable
   const analyserFallbackRef = useRef<AnalyserNode | null>(null);
   const fallbackIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sinkRef = useRef<GainNode | null>(null);
@@ -105,16 +121,21 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
   const candidateCountRef = useRef(0);
   const silenceFramesRef = useRef(0);
 
+  // Spectral-flux onset detection
   const prevFrameRef = useRef<Float32Array | null>(null);
 
-  const calibCountRef = useRef(0);
-  const calibRmsAccumRef = useRef(0);
-  const adaptiveMinRmsRef = useRef<number | null>(null);
+  // Adaptive noise gate calibration. We collect per-frame RMS and take the
+  // 25th percentile as the baseline — resilient to a user playing during
+  // calibration, which would otherwise inflate the gate and mask quiet notes.
+  const calibSamplesRef = useRef<number[]>([]);
+  const adaptiveMinRmsRef = useRef<number | null>(null); // null = not yet calibrated
 
   const chromaAccumRef = useRef<number[]>(Array(12).fill(0));
   const chromaDirtyRef = useRef(false);
   const chromaFlushAtRef = useRef(0);
   const levelFlushAtRef = useRef(0);
+  const harmonicVectorRef = useRef<number[]>(Array(NUM_HARMONICS).fill(0));
+  const harmonicsDirtyRef = useRef(false);
 
   const setConfig = useCallback((patch: Partial<PitchDetectorConfig>) => {
     setConfigState((prev) => {
@@ -127,11 +148,91 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
     });
   }, []);
 
+  // Hydrate persisted config on mount, then write-through on future changes.
+  // Gated on a ref so the first write doesn't clobber storage before the read.
+  const configHydratedRef = useRef(false);
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      configHydratedRef.current = true;
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<PitchDetectorConfig>;
+        setConfigState((prev) => ({ ...prev, ...parsed }));
+      }
+    } catch (err) {
+      console.warn("usePitchDetector: failed to read persisted config", err);
+    }
+    configHydratedRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (!configHydratedRef.current || typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+    } catch (err) {
+      console.warn("usePitchDetector: failed to persist config", err);
+    }
+  }, [config]);
+
+  // Restore detected notes and chroma from the previous session so a refresh
+  // doesn't wipe a practice session. A bounded session protects localStorage
+  // from runaway growth on very long sessions.
+  const sessionHydratedRef = useRef(false);
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      sessionHydratedRef.current = true;
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as {
+          notes?: DetectedNote[];
+          chromaProfile?: number[];
+        };
+        if (Array.isArray(parsed.notes) && parsed.notes.length > 0) {
+          setNotes(parsed.notes);
+        }
+        if (Array.isArray(parsed.chromaProfile) && parsed.chromaProfile.length === 12) {
+          setChromaProfile(parsed.chromaProfile);
+          chromaAccumRef.current = parsed.chromaProfile.slice();
+        }
+      }
+    } catch (err) {
+      console.warn("usePitchDetector: failed to read session", err);
+    }
+    sessionHydratedRef.current = true;
+  }, []);
+
+  // Persist on change, debounced — bursty pluck sessions would otherwise
+  // hammer localStorage. Bound the stored note count so storage stays small.
+  useEffect(() => {
+    if (!sessionHydratedRef.current || typeof window === "undefined") return;
+    const handle = setTimeout(() => {
+      try {
+        const trimmed = notes.length > 1000 ? notes.slice(-1000) : notes;
+        window.localStorage.setItem(
+          SESSION_STORAGE_KEY,
+          JSON.stringify({ notes: trimmed, chromaProfile })
+        );
+      } catch (err) {
+        console.warn("usePitchDetector: failed to persist session", err);
+      }
+    }, 500);
+    return () => clearTimeout(handle);
+  }, [notes, chromaProfile]);
+
   const finalizeActive = useCallback((endTime: number) => {
     const midi = activeMidiRef.current;
     if (midi == null) return;
     const start = activeStartRef.current;
-    const end = Math.max(endTime, activeEndRef.current);
+    // Use the last frame where audio was present, not the release time — the
+    // release is delayed by silenceFramesToRelease (~230ms) of post-decay silence
+    // and would otherwise inflate every note's duration.
+    const end = activeEndRef.current > 0 ? activeEndRef.current : endTime;
     const note: DetectedNote = {
       midi,
       noteName: midiToNoteName(midi),
@@ -155,20 +256,24 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
       if (!ctx || !detector) return;
       const now = performance.now();
 
+      // RMS
       let sumSq = 0;
       for (let i = 0; i < frame.length; i++) sumSq += frame[i] * frame[i];
       const rms = Math.sqrt(sumSq / frame.length);
 
-      if (calibCountRef.current < CALIB_FRAMES) {
-        calibCountRef.current += 1;
-        calibRmsAccumRef.current += rms;
-        if (calibCountRef.current === CALIB_FRAMES) {
-          const baseline = calibRmsAccumRef.current / CALIB_FRAMES;
+      // Adaptive noise gate calibration (first CALIB_FRAMES frames)
+      if (calibSamplesRef.current.length < CALIB_FRAMES) {
+        calibSamplesRef.current.push(rms);
+        if (calibSamplesRef.current.length === CALIB_FRAMES) {
+          const sorted = calibSamplesRef.current.slice().sort((a, b) => a - b);
+          const pIdx = Math.floor(sorted.length * 0.25);
+          const baseline = sorted[pIdx];
           adaptiveMinRmsRef.current = Math.max(cfg.minRms, baseline * CALIB_MULTIPLIER);
         }
       }
       const effectiveMinRms = adaptiveMinRmsRef.current ?? cfg.minRms;
 
+      // Release hysteresis: lower threshold while a note is active
       const releaseThreshold = activeMidiRef.current != null
         ? effectiveMinRms * HYSTERESIS_RATIO
         : effectiveMinRms;
@@ -178,6 +283,7 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
         setLevel(rms);
       }
 
+      // Spectral flux onset detection
       let onsetDetected = false;
       if (prevFrameRef.current) {
         onsetDetected = computeFlux(frame, prevFrameRef.current) > ONSET_FLUX_THRESHOLD;
@@ -188,12 +294,18 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
       prevFrameRef.current.set(frame);
 
       const [rawFreq, clarity] = detector.findPitch(frame, ctx.sampleRate);
+
+      // Octave-error correction on low notes
       const freq = octaveCorrect(frame, rawFreq, ctx.sampleRate, cfg.minFreq);
+
+      // Onset bypasses multi-frame confirmation (1-frame accept)
       const confirmThreshold = onsetDetected ? 1 : cfg.framesToConfirm;
 
+      const clarityThreshold =
+        activeMidiRef.current != null ? cfg.minClarity * CLARITY_HYSTERESIS_RATIO : cfg.minClarity;
       const passes =
         rms >= (activeMidiRef.current != null ? releaseThreshold : effectiveMinRms) &&
-        clarity >= cfg.minClarity &&
+        clarity >= clarityThreshold &&
         freq >= cfg.minFreq &&
         freq <= cfg.maxFreq;
 
@@ -233,7 +345,8 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
           }
         }
       } else {
-        if (rms < releaseThreshold || !passes) {
+        // Only count silence frames when RMS drops below release threshold
+        if (rms < releaseThreshold) {
           silenceFramesRef.current += 1;
         }
         if (
@@ -265,11 +378,23 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
         for (let i = 0; i < 12; i++) accum[i] += c[i];
         chromaDirtyRef.current = true;
 
+        // Harmonic envelope for the currently-active note — reuse freqDb
+        // so we don't run a second FFT.
+        if (activeMidiRef.current != null && activeFreqRef.current > 0) {
+          const raw = extractHarmonics(fdb, ctx.sampleRate, activeFreqRef.current, NUM_HARMONICS);
+          harmonicVectorRef.current = normalizeHarmonics(raw);
+          harmonicsDirtyRef.current = true;
+        }
+
         if (now - chromaFlushAtRef.current > 100) {
           chromaFlushAtRef.current = now;
           if (chromaDirtyRef.current) {
             setChromaProfile([...accum]);
             chromaDirtyRef.current = false;
+          }
+          if (harmonicsDirtyRef.current) {
+            setHarmonics([...harmonicVectorRef.current]);
+            harmonicsDirtyRef.current = false;
           }
         }
       }
@@ -305,8 +430,7 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
     candidateCountRef.current = 0;
     silenceFramesRef.current = 0;
     prevFrameRef.current = null;
-    calibCountRef.current = 0;
-    calibRmsAccumRef.current = 0;
+    calibSamplesRef.current = [];
     adaptiveMinRmsRef.current = null;
     chromaAccumRef.current = Array(12).fill(0);
     chromaDirtyRef.current = false;
@@ -336,18 +460,20 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
         const worklet = new AudioWorkletNode(ctx, "frame-producer", {
           processorOptions: { frameSize: FRAME_SIZE, hopSize: HOP_SIZE },
         });
-        source.connect(hp);
-        hp.connect(worklet);
-        worklet.connect(sink);
-        sink.connect(ctx.destination);
-        workletRef.current = worklet;
-
+        // Assign the message handler before wiring the audio graph so the
+        // worklet's first frames aren't dropped while the handler is unset.
         worklet.port.onmessage = (ev: MessageEvent<{ frame: Float32Array }>) => {
           const raw = ev.data?.frame;
           if (!raw) return;
           processFrame(raw as Float32Array<ArrayBuffer>);
         };
+        source.connect(hp);
+        hp.connect(worklet);
+        worklet.connect(sink);
+        sink.connect(ctx.destination);
+        workletRef.current = worklet;
       } else {
+        // Fallback: AnalyserNode polled via setInterval
         const analyser = ctx.createAnalyser();
         analyser.fftSize = FRAME_SIZE;
         analyser.smoothingTimeConstant = 0;
@@ -397,7 +523,9 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
     tearDown(sinkRef as React.MutableRefObject<AudioNode | null>);
 
     if (audioContextRef.current) {
-      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current.close().catch((err) => {
+        console.warn("usePitchDetector: AudioContext close failed", err);
+      });
       audioContextRef.current = null;
     }
     detectorRef.current = null;
@@ -419,14 +547,20 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
     setNotes([]);
     setCurrentNote(null);
     setChromaProfile(Array(12).fill(0));
+    setHarmonics(Array(NUM_HARMONICS).fill(0));
     chromaAccumRef.current = Array(12).fill(0);
     chromaDirtyRef.current = false;
+    harmonicVectorRef.current = Array(NUM_HARMONICS).fill(0);
+    harmonicsDirtyRef.current = false;
     candidateMidiRef.current = null;
     candidateCountRef.current = 0;
-    calibCountRef.current = 0;
-    calibRmsAccumRef.current = 0;
+    // Reset adaptive gate so it re-calibrates on next session
+    calibSamplesRef.current = [];
     adaptiveMinRmsRef.current = null;
     prevFrameRef.current = null;
+    if (typeof window !== "undefined") {
+      try { window.localStorage.removeItem(SESSION_STORAGE_KEY); } catch {}
+    }
   }, []);
 
   const addNotes = useCallback((more: DetectedNote[]) => {
@@ -447,7 +581,9 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
 
   useEffect(() => {
     return () => {
-      if (audioContextRef.current) audioContextRef.current.close().catch(() => {});
+      if (audioContextRef.current) audioContextRef.current.close().catch((err) => {
+        console.warn("usePitchDetector: AudioContext close failed", err);
+      });
       if (fallbackIntervalRef.current != null) clearInterval(fallbackIntervalRef.current);
     };
   }, []);
@@ -466,5 +602,6 @@ export function usePitchDetector(initial: Partial<PitchDetectorConfig> = {}) {
     config,
     setConfig,
     chromaProfile,
+    harmonics,
   };
 }

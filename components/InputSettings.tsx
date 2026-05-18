@@ -1,7 +1,9 @@
 "use client";
 
-import type { PitchDetectorConfig } from "@/lib/audio/usePitchDetector";
+import { DEFAULT_CONFIG, type PitchDetectorConfig } from "@/lib/audio/usePitchDetector";
 import type { MicDevice } from "@/lib/audio/useMicStream";
+import { TUNINGS, type Tuning } from "@/lib/guitar/tunings";
+import { stringLabelsFor } from "@/lib/guitar/fretboard";
 
 type Props = {
   config: PitchDetectorConfig;
@@ -10,6 +12,12 @@ type Props = {
   currentDeviceId: string | null;
   onDeviceChange: (id: string) => void;
   micOn: boolean;
+  tuningId: string;
+  onTuningChange: (id: string) => void;
+  tuning: Tuning;
+  tuningOffsetsCents: number[];
+  onTuningOffsetChange: (stringIndex: number, cents: number) => void;
+  onResetTuningOffsets: () => void;
 };
 
 export function InputSettings({
@@ -19,7 +27,15 @@ export function InputSettings({
   currentDeviceId,
   onDeviceChange,
   micOn,
+  tuningId,
+  onTuningChange,
+  tuning,
+  tuningOffsetsCents,
+  onTuningOffsetChange,
+  onResetTuningOffsets,
 }: Props) {
+  const labels = stringLabelsFor(tuning.midi);
+  const hasOffsets = tuningOffsetsCents.some((c) => c !== 0);
   return (
     <details className="group rounded-lg border border-zinc-800/80 bg-zinc-900/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
       <summary className="flex cursor-pointer select-none items-center justify-between px-4 py-3 text-sm font-medium text-zinc-300 group-open:border-b group-open:border-zinc-800 hover:text-zinc-100 transition-colors">
@@ -56,6 +72,21 @@ export function InputSettings({
               Turn on the mic to see device names.
             </span>
           )}
+        </label>
+
+        <label className="flex flex-col gap-1 text-xs text-zinc-400">
+          Tuning
+          <select
+            className="rounded bg-zinc-800 px-2 py-1 text-sm text-zinc-100"
+            value={tuningId}
+            onChange={(e) => onTuningChange(e.target.value)}
+          >
+            {TUNINGS.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
         </label>
 
         <label className="flex flex-col gap-1 text-xs text-zinc-400">
@@ -130,6 +161,61 @@ export function InputSettings({
           />
           Polyphonic mode (chord/chroma detection) &mdash; experimental
         </label>
+
+        <fieldset className="sm:col-span-2 rounded border border-zinc-800 p-2">
+          <legend className="px-1 text-[11px] uppercase tracking-wide text-zinc-500">
+            Per-string cents trim
+          </legend>
+          <p className="mb-2 text-[10px] text-zinc-500">
+            Nudge each open-string tuner target ±50¢. Useful for guitars that
+            don&rsquo;t intonate perfectly.
+          </p>
+          <div className="grid grid-cols-6 gap-1.5">
+            {labels.map((label, i) => (
+              <label
+                key={`offset-${i}`}
+                className="flex flex-col items-center gap-1"
+              >
+                <span className="text-[10px] font-medium text-zinc-300">
+                  {label}
+                </span>
+                <input
+                  type="number"
+                  min={-50}
+                  max={50}
+                  step={1}
+                  value={tuningOffsetsCents[i] ?? 0}
+                  onChange={(e) =>
+                    onTuningOffsetChange(i, Number(e.target.value))
+                  }
+                  aria-label={`${label} string cents trim`}
+                  className="w-full rounded bg-zinc-800 px-1 py-0.5 text-center text-xs tabular-nums text-zinc-100"
+                />
+              </label>
+            ))}
+          </div>
+          {hasOffsets && (
+            <div className="mt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={onResetTuningOffsets}
+                className="text-[11px] text-zinc-400 underline hover:text-zinc-200"
+              >
+                Clear trims
+              </button>
+            </div>
+          )}
+        </fieldset>
+
+        <div className="sm:col-span-2 flex justify-end">
+          <button
+            type="button"
+            onClick={() => onChange(DEFAULT_CONFIG)}
+            className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-200"
+          >
+            Reset detection settings
+          </button>
+        </div>
       </div>
     </details>
   );

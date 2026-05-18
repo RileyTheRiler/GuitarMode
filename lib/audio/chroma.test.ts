@@ -8,9 +8,9 @@ const BIN_HZ = SAMPLE_RATE / FFT_SIZE;
 
 function makeSpectrumWithPeak(peakFreq: number): Float32Array {
   const n = FFT_SIZE / 2;
-  const data = new Float32Array(n).fill(-120);
+  const data = new Float32Array(n).fill(-120); // silence floor
   const bin = Math.round(peakFreq / BIN_HZ);
-  if (bin > 0 && bin < n) data[bin] = 0;
+  if (bin > 0 && bin < n) data[bin] = 0; // 0 dB peak
   return data;
 }
 
@@ -28,20 +28,21 @@ describe("computeChroma", () => {
   });
 
   it("lights up pitch class 9 (A) for a 440 Hz peak", () => {
-    const spectrum = makeSpectrumWithPeak(440);
+    const spectrum = makeSpectrumWithPeak(440); // A4
     const chroma = computeChroma(spectrum, SAMPLE_RATE, A4_HZ, 70, 1400);
     const maxPc = chroma.indexOf(Math.max(...chroma));
-    expect(maxPc).toBe(9);
+    expect(maxPc).toBe(9); // A = pitch class 9
   });
 
   it("lights up pitch class 0 (C) for a ~261 Hz peak", () => {
-    const spectrum = makeSpectrumWithPeak(261.63);
+    const spectrum = makeSpectrumWithPeak(261.63); // C4
     const chroma = computeChroma(spectrum, SAMPLE_RATE, A4_HZ, 70, 1400);
     const maxPc = chroma.indexOf(Math.max(...chroma));
-    expect(maxPc).toBe(0);
+    expect(maxPc).toBe(0); // C
   });
 
   it("ignores bins outside [minFreq, maxFreq]", () => {
+    // Put a strong peak way above maxFreq
     const spectrum = new Float32Array(FFT_SIZE / 2).fill(-120);
     spectrum[Math.round(5000 / BIN_HZ)] = 0;
     const chroma = computeChroma(spectrum, SAMPLE_RATE, A4_HZ, 70, 1400);

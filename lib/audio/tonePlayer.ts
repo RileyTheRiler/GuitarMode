@@ -44,45 +44,86 @@ export function scheduleClick(time: number, accent = false) {
   osc.stop(time + 0.08);
 }
 
+export type ScheduledNote = {
+  /** Audio-clock time when the note stops sounding (envelope end + tail). */
+  stopAt: number;
+  /** Fade out and free the nodes now. Idempotent. */
+  cancel: () => void;
+};
+
 /**
- * Schedule a guitar-ish pluck at a specific AudioContext time. Unlike
- * playPluck(), this uses the audio clock for sample-accurate timing so it can
- * be called ahead-of-time to schedule an entire solo. The decay window starts
- * at `time`; pass `ctx.currentTime` to play immediately.
+ * Schedule a guitar-ish pluck at a specific AudioContext time.
+ *
+ * - 2-arg call sites (`schedulePluck(midi, time)`) use the default
+ *   `durS = 0.85` and match upstream's previous envelope shape. The
+ *   returned handle's `cancel()` can be discarded if not needed.
+ * - 4-arg call sites pass an explicit duration; the progression /
+ *   audition players use this to keep notes ringing until the next
+ *   strum and yank them cleanly on stop.
  */
-export function schedulePluck(midi: number, time: number, a4Hz = 440) {
+export function schedulePluck(
+  midi: number,
+  at: number,
+  durS = 0.85,
+  a4Hz = 440
+): ScheduledNote {
   const ctx = getContext();
   if (ctx.state === "suspended") ctx.resume().catch(() => {});
   const fundamental = midiToFreq(midi, a4Hz);
+  const envelope = Math.max(0.3, durS);
+  const stopAt = at + envelope + 0.1;
 
   const master = ctx.createGain();
-  master.gain.setValueAtTime(0, time);
-  master.gain.linearRampToValueAtTime(0.22, time + 0.005);
-  master.gain.exponentialRampToValueAtTime(0.0005, time + 0.85);
+  master.gain.setValueAtTime(0, at);
+  master.gain.linearRampToValueAtTime(0.22, at + 0.008);
+  master.gain.exponentialRampToValueAtTime(0.0005, at + envelope);
 
   const filter = ctx.createBiquadFilter();
   filter.type = "lowpass";
-  filter.frequency.setValueAtTime(fundamental * 8, time);
-  filter.frequency.exponentialRampToValueAtTime(fundamental * 2, time + 0.85);
+  filter.frequency.setValueAtTime(fundamental * 8, at);
+  filter.frequency.exponentialRampToValueAtTime(fundamental * 2, at + envelope);
   filter.Q.value = 1;
 
+  const oscs: OscillatorNode[] = [];
   for (const detune of [-6, 6]) {
     const osc = ctx.createOscillator();
     osc.type = "triangle";
     osc.frequency.value = fundamental;
     osc.detune.value = detune;
     osc.connect(filter);
-    osc.start(time);
-    osc.stop(time + 1.0);
+    osc.start(at);
+    osc.stop(stopAt);
+    oscs.push(osc);
   }
 
   filter.connect(master);
   master.connect(ctx.destination);
 
-  const cleanupMs = Math.max(0, (time - ctx.currentTime) * 1000) + 1100;
-  setTimeout(() => {
-    try { master.disconnect(); filter.disconnect(); } catch {}
-  }, cleanupMs);
+  oscs[oscs.length - 1].onended = () => {
+    try {
+      master.disconnect();
+      filter.disconnect();
+    } catch {}
+  };
+
+  let cancelled = false;
+  return {
+    stopAt,
+    cancel: () => {
+      if (cancelled) return;
+      cancelled = true;
+      const now = ctx.currentTime;
+      try {
+        master.gain.cancelScheduledValues(now);
+        // Snap to current value then fade out so the abort doesn't click.
+        master.gain.setValueAtTime(master.gain.value, now);
+        master.gain.linearRampToValueAtTime(0.0001, now + 0.04);
+      } catch {}
+      for (const o of oscs) {
+        try { o.stop(now + 0.05); } catch {}
+      }
+    },
+  };
 }
 
 /**
@@ -146,38 +187,5 @@ export function scheduleBend(
 export function playPluck(midi: number, a4Hz = 440) {
   const ctx = getContext();
   if (ctx.state === "suspended") ctx.resume().catch(() => {});
-  const now = ctx.currentTime;
-  const fundamental = midiToFreq(midi, a4Hz);
-
-  const master = ctx.createGain();
-  master.gain.setValueAtTime(0, now);
-  master.gain.linearRampToValueAtTime(0.25, now + 0.005);
-  master.gain.exponentialRampToValueAtTime(0.0005, now + 0.9);
-
-  const filter = ctx.createBiquadFilter();
-  filter.type = "lowpass";
-  filter.frequency.setValueAtTime(fundamental * 8, now);
-  filter.frequency.exponentialRampToValueAtTime(fundamental * 2, now + 0.9);
-  filter.Q.value = 1;
-
-  for (const detune of [-6, 6]) {
-    const osc = ctx.createOscillator();
-    osc.type = "triangle";
-    osc.frequency.value = fundamental;
-    osc.detune.value = detune;
-    osc.connect(filter);
-    osc.start(now);
-    osc.stop(now + 1.0);
-  }
-
-  filter.connect(master);
-  master.connect(ctx.destination);
-
-  // Disconnect after the envelope has fully decayed.
-  setTimeout(() => {
-    try {
-      master.disconnect();
-      filter.disconnect();
-    } catch {}
-  }, 1100);
+  schedulePluck(midi, ctx.currentTime, 0.9, a4Hz);
 }
