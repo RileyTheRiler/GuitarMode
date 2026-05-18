@@ -44,17 +44,6 @@ export function scheduleClick(time: number, accent = false) {
   osc.stop(time + 0.08);
 }
 
-/**
- * Play a short, guitar-ish pluck at the given MIDI pitch. Uses a pair of
- * slightly-detuned triangle oscillators through an exponential envelope.
- * Good enough for previewing a fretboard position.
- */
-export function playPluck(midi: number, a4Hz = 440) {
-  const ctx = getContext();
-  if (ctx.state === "suspended") ctx.resume().catch(() => {});
-  schedulePluck(midi, ctx.currentTime, 0.9, a4Hz);
-}
-
 export type ScheduledNote = {
   /** Audio-clock time when the note stops sounding (envelope end + tail). */
   stopAt: number;
@@ -63,14 +52,19 @@ export type ScheduledNote = {
 };
 
 /**
- * Schedule a pluck at an exact audio-clock time. Returns a handle whose
- * `cancel()` releases the gain quickly and stops the oscillators, so a
- * progression player can yank everything mid-playback without clicks.
+ * Schedule a guitar-ish pluck at a specific AudioContext time.
+ *
+ * - 2-arg call sites (`schedulePluck(midi, time)`) use the default
+ *   `durS = 0.85` and match upstream's previous envelope shape. The
+ *   returned handle's `cancel()` can be discarded if not needed.
+ * - 4-arg call sites pass an explicit duration; the progression /
+ *   audition players use this to keep notes ringing until the next
+ *   strum and yank them cleanly on stop.
  */
 export function schedulePluck(
   midi: number,
   at: number,
-  durS: number,
+  durS = 0.85,
   a4Hz = 440
 ): ScheduledNote {
   const ctx = getContext();
@@ -130,4 +124,68 @@ export function schedulePluck(
       }
     },
   };
+}
+
+/**
+ * Schedule a string bend: pick at `midi`, glide the pitch up by `semitones`
+ * semitones over `bendMs` milliseconds, then sustain and decay.
+ * Sounds convincingly like a real guitar bend because the oscillator
+ * frequency is ramped on the audio clock — no timer jitter.
+ */
+export function scheduleBend(
+  midi: number,
+  semitones: number,
+  time: number,
+  bendMs = 220,
+  a4Hz = 440
+) {
+  const ctx = getContext();
+  if (ctx.state === "suspended") ctx.resume().catch(() => {});
+
+  const freqStart = midiToFreq(midi, a4Hz);
+  const freqEnd = midiToFreq(midi + semitones, a4Hz);
+  const bendEnd = time + bendMs / 1000;
+  const decay = time + 1.4;
+
+  const master = ctx.createGain();
+  master.gain.setValueAtTime(0, time);
+  master.gain.linearRampToValueAtTime(0.24, time + 0.006);
+  master.gain.setValueAtTime(0.24, bendEnd);
+  master.gain.exponentialRampToValueAtTime(0.0005, decay);
+
+  const filter = ctx.createBiquadFilter();
+  filter.type = "lowpass";
+  filter.frequency.setValueAtTime(freqStart * 8, time);
+  filter.frequency.exponentialRampToValueAtTime(freqEnd * 3, decay);
+  filter.Q.value = 1.2;
+
+  for (const detune of [-5, 5]) {
+    const osc = ctx.createOscillator();
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(freqStart, time);
+    osc.frequency.linearRampToValueAtTime(freqEnd, bendEnd);
+    osc.detune.value = detune;
+    osc.connect(filter);
+    osc.start(time);
+    osc.stop(decay + 0.05);
+  }
+
+  filter.connect(master);
+  master.connect(ctx.destination);
+
+  const cleanupMs = Math.max(0, (time - ctx.currentTime) * 1000) + (decay - time) * 1000 + 200;
+  setTimeout(() => {
+    try { master.disconnect(); filter.disconnect(); } catch {}
+  }, cleanupMs);
+}
+
+/**
+ * Play a short, guitar-ish pluck at the given MIDI pitch. Uses a pair of
+ * slightly-detuned triangle oscillators through an exponential envelope.
+ * Good enough for previewing a fretboard position.
+ */
+export function playPluck(midi: number, a4Hz = 440) {
+  const ctx = getContext();
+  if (ctx.state === "suspended") ctx.resume().catch(() => {});
+  schedulePluck(midi, ctx.currentTime, 0.9, a4Hz);
 }

@@ -235,7 +235,6 @@ export function WaveformPlayer({ audioBuffer, onTimeUpdate }: Props) {
     startPlayback();
   }, [playing, currentPlayheadSeconds, stopSource, startPlayback]);
 
-  // Click on waveform to seek
   const handleSeek = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       const canvas = canvasRef.current;
