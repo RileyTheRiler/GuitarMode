@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { colorForPitchClass, pitchClassName } from "@/lib/music/notes";
 import { STANDARD_TUNING, STRING_LABELS, getNoteAt } from "@/lib/guitar/fretboard";
 
@@ -10,12 +9,6 @@ type Props = {
   scalePitchClasses?: Set<number>;
   rootPitchClass?: number | null;
   currentPitchClass?: number | null;
-  /** When set, pulsing animation is shown only at this exact string+fret instead of all positions with currentPitchClass. */
-  highlightFretPosition?: { stringIndex: number; fret: number } | null;
-  chordPitchClasses?: Set<number>;
-  chordRootPitchClass?: number | null;
-  chordThirdPitchClass?: number | null;
-  chordFifthPitchClass?: number | null;
   boxCenterFret?: number | null;
   boxWindow?: number;
   onFretClick?: (stringIndex: number, fret: number, midi: number) => void;
@@ -24,50 +17,24 @@ type Props = {
 const DOUBLE_MARKERS = new Set([12, 24]);
 const SINGLE_MARKERS = new Set([3, 5, 7, 9, 15, 17, 19, 21]);
 
-// Tailwind sm breakpoint = 640px. Below that, switch to compact sizing so the
-// full fretboard is readable on phones instead of requiring heavy scrolling.
-function useCompactFretboard() {
-  const [compact, setCompact] = useState(false);
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.matchMedia) return;
-    const mq = window.matchMedia("(max-width: 639px)");
-    const update = () => setCompact(mq.matches);
-    update();
-    mq.addEventListener("change", update);
-    return () => mq.removeEventListener("change", update);
-  }, []);
-  return compact;
-}
-
 export function Fretboard({
   numFrets = 22,
   playedPitchClasses,
   scalePitchClasses,
   rootPitchClass,
   currentPitchClass,
-  highlightFretPosition,
-  chordPitchClasses,
-  chordRootPitchClass,
-  chordThirdPitchClass,
-  chordFifthPitchClass,
   boxCenterFret,
   boxWindow = 5,
   onFretClick,
 }: Props) {
-  const chordActive = !!chordPitchClasses && chordPitchClasses.size > 0;
   const numStrings = STANDARD_TUNING.length;
-  const compact = useCompactFretboard();
-  const nutWidth = compact ? 8 : 10;
-  const leftPad = compact ? 30 : 44;
-  const rightPad = compact ? 10 : 16;
-  const topPad = compact ? 18 : 24;
-  const bottomPad = compact ? 18 : 24;
-  const fretWidth = compact ? 34 : 52;
-  const stringSpacing = compact ? 22 : 30;
-  const noteRadius = compact ? 9 : 11;
-  const noteFontSize = compact ? 9 : 10;
-  const stringLabelFontSize = compact ? 10 : 12;
-  const fretNumFontSize = compact ? 9 : 10;
+  const nutWidth = 10;
+  const leftPad = 44;
+  const rightPad = 16;
+  const topPad = 24;
+  const bottomPad = 24;
+  const fretWidth = 52;
+  const stringSpacing = 30;
 
   const boardWidth = numFrets * fretWidth;
   const width = leftPad + nutWidth + boardWidth + rightPad;
@@ -95,19 +62,8 @@ export function Fretboard({
       const isPlayed = playedPitchClasses.has(pos.pitchClass);
       const isInScale = scalePitchClasses?.has(pos.pitchClass) ?? false;
       const isRoot = rootPitchClass != null && pos.pitchClass === rootPitchClass;
-      const isLive = highlightFretPosition
-        ? highlightFretPosition.stringIndex === s && highlightFretPosition.fret === f
-        : currentPitchClass != null && pos.pitchClass === currentPitchClass;
-      const isChordTone = chordActive && (chordPitchClasses?.has(pos.pitchClass) ?? false);
-      const isChordRoot =
-        chordActive && chordRootPitchClass != null && pos.pitchClass === chordRootPitchClass;
-      const isChordThird =
-        chordActive && chordThirdPitchClass != null && pos.pitchClass === chordThirdPitchClass;
-      const isChordFifth =
-        chordActive && chordFifthPitchClass != null && pos.pitchClass === chordFifthPitchClass;
-      // Chord tones override the box focus so they stay visible outside the window.
-      const visible =
-        (inBox(f) && (isPlayed || isInScale || isLive)) || isChordTone || isLive;
+      const isLive = currentPitchClass != null && pos.pitchClass === currentPitchClass;
+      const visible = inBox(f) && (isPlayed || isInScale || isLive);
 
       const cx = fretX(f);
       const cy = stringY(s);
@@ -130,17 +86,10 @@ export function Fretboard({
       if (!visible) continue;
 
       const color = colorForPitchClass(pos.pitchClass);
-      const baseR = noteRadius;
-      const r = isChordTone ? baseR + 1 : baseR;
-      // Dim scale-only tones when a chord is active; chord tones stay bright.
-      let groupOpacity = 1;
-      if (chordActive && !isChordTone && !isLive) {
-        groupOpacity = isPlayed ? 0.6 : 0.35;
-      }
+      const r = 11;
 
       circles.push(
-        <g key={`note-${s}-${f}`} pointerEvents="none" opacity={groupOpacity}>
-          {/* Pulsing ring for the live note */}
+        <g key={`note-${s}-${f}`} pointerEvents="none">
           {isLive && (
             <circle cx={cx} cy={cy} r={r + 5} fill="none" stroke={color} strokeWidth={2}>
               <animate
@@ -157,41 +106,33 @@ export function Fretboard({
               />
             </circle>
           )}
-          {/* Chord-root white halo */}
-          {isChordRoot && (
-            <circle cx={cx} cy={cy} r={r + 4} fill="none" stroke="#fff" strokeWidth={1.5} opacity={0.5} />
-          )}
-          {/* Chord-third gold accent — the sweet resolution note */}
-          {isChordThird && (
-            <circle cx={cx} cy={cy} r={r + 3} fill="none" stroke="#fbbf24" strokeWidth={2} />
-          )}
           {isPlayed ? (
             <circle
               cx={cx}
               cy={cy}
               r={r}
               fill={color}
-              stroke={isChordRoot ? "#fff" : isRoot ? "#fff" : color}
-              strokeWidth={isChordRoot ? 3 : isChordTone ? 2.5 : isRoot ? 2.5 : 1}
+              stroke={isRoot ? "#fff" : color}
+              strokeWidth={isRoot ? 2.5 : 1}
             />
           ) : (
             <circle
               cx={cx}
               cy={cy}
               r={r}
-              fill={isLive || isChordTone ? color : "#0a0a0a"}
-              stroke={isChordRoot ? "#fff" : color}
-              strokeWidth={isChordRoot ? 3 : isChordTone ? 2.5 : isRoot ? 3 : 2}
-              opacity={isLive && !isChordTone ? 0.85 : 1}
+              fill={isLive ? color : "#0a0a0a"}
+              stroke={color}
+              strokeWidth={isRoot ? 3 : 2}
+              opacity={isLive ? 0.85 : 1}
             />
           )}
           <text
             x={cx}
             y={cy + 3.5}
             textAnchor="middle"
-            fontSize={noteFontSize}
-            fontWeight={isChordRoot || isRoot ? 700 : 500}
-            fill={isPlayed || isLive || isChordTone ? "#0a0a0a" : color}
+            fontSize={10}
+            fontWeight={isRoot ? 700 : 500}
+            fill={isPlayed || isLive ? "#0a0a0a" : color}
           >
             {pitchClassName(pos.pitchClass)}
           </text>
@@ -283,9 +224,9 @@ export function Fretboard({
         {Array.from({ length: numStrings }, (_, s) => (
           <text
             key={`label-${s}`}
-            x={leftPad - (compact ? 14 : 22)}
+            x={leftPad - 22}
             y={stringY(s) + 4}
-            fontSize={stringLabelFontSize}
+            fontSize={12}
             fill="#e5e5e5"
             textAnchor="middle"
           >
@@ -297,8 +238,8 @@ export function Fretboard({
           <text
             key={`fretnum-${f}`}
             x={leftPad + nutWidth + (f - 0.5) * fretWidth}
-            y={topPad + boardHeight + (compact ? 14 : 18)}
-            fontSize={fretNumFontSize}
+            y={topPad + boardHeight + 18}
+            fontSize={10}
             fill="#a1a1aa"
             textAnchor="middle"
           >
