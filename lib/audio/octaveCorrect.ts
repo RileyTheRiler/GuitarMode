@@ -27,12 +27,14 @@ export function octaveCorrect(
   sampleRate: number,
   minFreq: number
 ): number {
+  // YIN can return 0 / NaN on weak input; bail before the divisions.
+  if (!(freq > 0) || !Number.isFinite(freq)) return freq;
   const halfFreq = freq / 2;
   if (halfFreq < minFreq) return freq;
 
   const period = Math.round(sampleRate / freq);
   const halfPeriod = period * 2;
-  if (halfPeriod >= frame.length) return freq;
+  if (period < 1 || halfPeriod >= frame.length) return freq;
 
   const r1 = autocorrNormalized(frame, period);
   const r2 = autocorrNormalized(frame, halfPeriod);

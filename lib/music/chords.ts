@@ -7,6 +7,12 @@ export type ChordQuality =
   | "maj7"
   | "min7"
   | "dim"
+  | "dim7"
+  | "m7b5"
+  | "aug"
+  | "6"
+  | "m6"
+  | "add9"
   | "sus2"
   | "sus4";
 
@@ -23,6 +29,12 @@ export const CHORD_TEMPLATES: Record<ChordQuality, ChordTemplate> = {
   maj7: { intervals: [0, 4, 7, 11], thirdIdx: 1, fifthIdx: 2 },
   min7: { intervals: [0, 3, 7, 10], thirdIdx: 1, fifthIdx: 2 },
   dim: { intervals: [0, 3, 6], thirdIdx: 1, fifthIdx: 2 },
+  dim7: { intervals: [0, 3, 6, 9], thirdIdx: 1, fifthIdx: 2 },
+  m7b5: { intervals: [0, 3, 6, 10], thirdIdx: 1, fifthIdx: 2 },
+  aug: { intervals: [0, 4, 8], thirdIdx: 1, fifthIdx: 2 },
+  "6": { intervals: [0, 4, 7, 9], thirdIdx: 1, fifthIdx: 2 },
+  m6: { intervals: [0, 3, 7, 9], thirdIdx: 1, fifthIdx: 2 },
+  add9: { intervals: [0, 4, 7, 2], thirdIdx: 1, fifthIdx: 2 },
   sus2: { intervals: [0, 2, 7], thirdIdx: null, fifthIdx: 2 },
   sus4: { intervals: [0, 5, 7], thirdIdx: null, fifthIdx: 2 },
 };
@@ -31,7 +43,10 @@ const ROOT_PITCH_CLASS: Record<string, number> = {
   C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11,
 };
 
-const CHORD_REGEX = /^([A-G])(#|b)?(maj7|min7|m7|maj|min|m|7|dim|sus2|sus4)?$/;
+// Longer alternatives come first so e.g. "maj7" wins over "maj", and
+// "m7b5" wins over "m7".
+const CHORD_REGEX =
+  /^([A-G])(#|b)?(maj7|min7|m7b5|m6|m7|maj|min|m|dim7|dim|aug|add9|sus2|sus4|7|6)?$/;
 
 export function parseChord(
   input: string

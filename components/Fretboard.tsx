@@ -2,12 +2,15 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { colorForPitchClass, pitchClassName } from "@/lib/music/notes";
-import { STANDARD_TUNING, getNoteAt } from "@/lib/guitar/fretboard";
+import {
+  STANDARD_TUNING,
+  getNoteAt,
+  stringLabelsFor,
+} from "@/lib/guitar/fretboard";
 
 type Props = {
   numFrets?: number;
   tuning?: number[];
-  stringLabels?: string[];
   highContrast?: boolean;
   showDegrees?: boolean;
   degreeMap?: Map<number, string>;
@@ -63,7 +66,6 @@ function useReducedMotion() {
 export function Fretboard({
   numFrets = 22,
   tuning = STANDARD_TUNING,
-  stringLabels,
   highContrast = false,
   showDegrees = false,
   degreeMap,
@@ -84,9 +86,9 @@ export function Fretboard({
 }: Props) {
   const chordActive = !!chordPitchClasses && chordPitchClasses.size > 0;
   const numStrings = tuning.length;
+  const stringLabels = useMemo(() => stringLabelsFor(tuning), [tuning]);
   const compact = useCompactFretboard();
   const reducedMotion = useReducedMotion();
-  const displayLabels = stringLabels ?? tuning.map((_, i) => ["E", "A", "D", "G", "B", "e"][i] ?? String(i + 1));
 
   const nutWidth = compact ? 8 : 10;
   const leftPad = compact ? 30 : 44;
@@ -185,7 +187,10 @@ export function Fretboard({
       const cy = stringY(s);
 
       if (onFretClick) {
-        const noteLabel = `${pos.noteName} — string ${s + 1}, fret ${f}`;
+        const label =
+          f === 0
+            ? `Open ${stringLabels[s]} string, ${pos.noteName}`
+            : `${stringLabels[s]} string fret ${f}, ${pos.noteName}`;
         hitTargets.push(
           <rect
             key={`hit-${s}-${f}`}
@@ -196,9 +201,11 @@ export function Fretboard({
             fill="transparent"
             cursor="pointer"
             role="button"
-            aria-label={noteLabel}
+            aria-label={label}
             onClick={() => onFretClick(s, f, pos.midi)}
-          />
+          >
+            <title>{label}</title>
+          </rect>
         );
       }
 
@@ -459,7 +466,7 @@ export function Fretboard({
             fill="#e5e5e5"
             textAnchor="middle"
           >
-            {displayLabels[s]}
+            {stringLabels[s]}
           </text>
         ))}
 

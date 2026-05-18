@@ -1,53 +1,25 @@
-export type TuningPreset = {
+// Built-in guitar tunings. Each tuning is stored as 6 MIDI values (low to
+// high). Open-string labels are derived from the MIDI pitch class so a new
+// tuning doesn't need to specify them.
+
+export type Tuning = {
   id: string;
-  label: string;
+  name: string;
   midi: number[];
-  stringLabels: string[];
 };
 
-export const TUNING_PRESETS: TuningPreset[] = [
-  {
-    id: "standard",
-    label: "Standard (EADGBe)",
-    midi: [40, 45, 50, 55, 59, 64],
-    stringLabels: ["E", "A", "D", "G", "B", "e"],
-  },
-  {
-    id: "dropD",
-    label: "Drop D (DADGBe)",
-    midi: [38, 45, 50, 55, 59, 64],
-    stringLabels: ["D", "A", "D", "G", "B", "e"],
-  },
-  {
-    id: "halfDown",
-    label: "Half step down (Eb)",
-    midi: [39, 44, 49, 54, 58, 63],
-    stringLabels: ["Eb", "Ab", "Db", "Gb", "Bb", "eb"],
-  },
-  {
-    id: "fullDown",
-    label: "Full step down (D)",
-    midi: [38, 43, 48, 53, 57, 62],
-    stringLabels: ["D", "G", "C", "F", "A", "d"],
-  },
-  {
-    id: "openG",
-    label: "Open G (DGDGBd)",
-    midi: [38, 43, 50, 55, 59, 62],
-    stringLabels: ["D", "G", "D", "G", "B", "d"],
-  },
-  {
-    id: "openD",
-    label: "Open D (DADf#ad)",
-    midi: [38, 45, 50, 54, 57, 62],
-    stringLabels: ["D", "A", "D", "F#", "A", "d"],
-  },
-  {
-    id: "dadgad",
-    label: "DADGAD",
-    midi: [38, 45, 50, 55, 57, 62],
-    stringLabels: ["D", "A", "D", "G", "A", "d"],
-  },
+export const TUNINGS: Tuning[] = [
+  { id: "standard", name: "Standard (EADGBE)", midi: [40, 45, 50, 55, 59, 64] },
+  { id: "drop-d", name: "Drop D (DADGBE)", midi: [38, 45, 50, 55, 59, 64] },
+  { id: "half-down", name: "Half-step down (E♭A♭D♭G♭B♭E♭)", midi: [39, 44, 49, 54, 58, 63] },
+  { id: "full-down", name: "Full-step down (DGCFAD)", midi: [38, 43, 48, 53, 57, 62] },
+  { id: "open-g", name: "Open G (DGDGBD)", midi: [38, 43, 50, 55, 59, 62] },
+  { id: "dadgad", name: "DADGAD", midi: [38, 45, 50, 55, 57, 62] },
 ];
 
-export const STANDARD_TUNING_PRESET = TUNING_PRESETS[0];
+export const DEFAULT_TUNING_ID = "standard";
+
+export function getTuning(id: string | null | undefined): Tuning {
+  if (!id) return TUNINGS[0];
+  return TUNINGS.find((t) => t.id === id) ?? TUNINGS[0];
+}

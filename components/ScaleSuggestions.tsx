@@ -3,12 +3,14 @@
 import { useState } from "react";
 import { colorForPitchClass, pitchClassName } from "@/lib/music/notes";
 import type { ScaleMatch } from "@/lib/music/detectScale";
+import { useScaleAudition } from "@/lib/audio/useScaleAudition";
 
 type Props = {
   matches: ScaleMatch[];
   selectedIndex: number | null;
   onSelect: (index: number) => void;
   detectedCount: number;
+  a4Hz?: number;
 };
 
 function CopyButton({ text }: { text: string }) {
@@ -50,7 +52,15 @@ function confidenceGradient(pct: number): string {
   return "linear-gradient(to right, #ef4444, #f87171)";
 }
 
-export function ScaleSuggestions({ matches, selectedIndex, onSelect, detectedCount }: Props) {
+export function ScaleSuggestions({
+  matches,
+  selectedIndex,
+  onSelect,
+  detectedCount,
+  a4Hz = 440,
+}: Props) {
+  const audition = useScaleAudition();
+
   if (matches.length === 0) {
     return (
       <div className="flex flex-col items-center gap-3 py-8 text-center">
@@ -80,15 +90,18 @@ export function ScaleSuggestions({ matches, selectedIndex, onSelect, detectedCou
         {matches.map((m, i) => {
           const selected = i === selectedIndex;
           const pct = Math.round(m.confidence * 100);
+          const key = `${m.root}-${m.templateName}`;
+          const isAuditioning = audition.playingKey === key;
           const noteNames = m.scale.map((pc) => pitchClassName(pc)).join(", ");
           const copyText = `${m.rootName} ${m.templateName} — confidence ${pct}% — notes: ${noteNames}`;
 
           return (
-            <li key={`${m.root}-${m.templateName}`}>
+            <li key={key} className="relative">
               <button
                 type="button"
                 onClick={() => onSelect(i)}
-                className={`w-full rounded-lg border px-3 py-2 text-left transition ${
+                aria-pressed={selected}
+                className={`w-full rounded-lg border px-3 py-2 pr-12 text-left transition ${
                   selected
                     ? "border-emerald-500 border-l-[3px] border-l-emerald-400 bg-emerald-500/10 pl-[calc(0.75rem-1px)]"
                     : "border-zinc-700 bg-zinc-900 hover:border-zinc-500"
@@ -128,6 +141,33 @@ export function ScaleSuggestions({ matches, selectedIndex, onSelect, detectedCou
                     Try next:{" "}
                     {m.missing.map((pc) => pitchClassName(pc)).join(", ")}
                   </p>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (isAuditioning) audition.stop();
+                  else audition.play(key, m.root, m.template.intervals, a4Hz);
+                }}
+                aria-label={
+                  isAuditioning
+                    ? `Stop auditioning ${m.rootName} ${m.templateName}`
+                    : `Play ${m.rootName} ${m.templateName}`
+                }
+                className={`absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-full text-sm transition ${
+                  isAuditioning
+                    ? "bg-emerald-500 text-zinc-950 hover:bg-emerald-400"
+                    : "bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
+                }`}
+              >
+                {isAuditioning ? (
+                  <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                    <rect x="2" y="2" width="6" height="6" fill="currentColor" />
+                  </svg>
+                ) : (
+                  <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                    <path d="M2 1 L9 5 L2 9 Z" fill="currentColor" />
+                  </svg>
                 )}
               </button>
             </li>

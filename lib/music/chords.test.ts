@@ -34,6 +34,24 @@ describe("parseChord", () => {
     expect(parseChord("")).toBeNull();
     expect(parseChord("Cfoo")).toBeNull();
   });
+
+  it("parses extended jazz qualities", () => {
+    expect(parseChord("Bdim7")).toEqual({ root: 11, quality: "dim7" });
+    expect(parseChord("Bm7b5")).toEqual({ root: 11, quality: "m7b5" });
+    expect(parseChord("Caug")).toEqual({ root: 0, quality: "aug" });
+    expect(parseChord("G6")).toEqual({ root: 7, quality: "6" });
+    expect(parseChord("Am6")).toEqual({ root: 9, quality: "m6" });
+    expect(parseChord("Cadd9")).toEqual({ root: 0, quality: "add9" });
+  });
+
+  it("longer suffixes win over shorter prefixes", () => {
+    expect(parseChord("Bm7b5")?.quality).toBe("m7b5");
+    expect(parseChord("Bm7")?.quality).toBe("min7");
+    expect(parseChord("Bdim7")?.quality).toBe("dim7");
+    expect(parseChord("Bdim")?.quality).toBe("dim");
+    expect(parseChord("Am6")?.quality).toBe("m6");
+    expect(parseChord("Am")?.quality).toBe("min");
+  });
 });
 
 describe("chordPitchClasses", () => {
@@ -61,5 +79,31 @@ describe("chordPitchClasses", () => {
   it("includes 7th for dominant seven", () => {
     const r = chordPitchClasses(7, "7");
     expect(r.all).toEqual(new Set([7, 11, 2, 5]));
+  });
+
+  it("returns the diminished-seventh stack of minor thirds", () => {
+    const r = chordPitchClasses(11, "dim7");
+    expect(r.all).toEqual(new Set([11, 2, 5, 8]));
+    expect(r.third).toBe(2);
+    expect(r.fifth).toBe(5);
+  });
+
+  it("returns the half-diminished collection", () => {
+    const r = chordPitchClasses(11, "m7b5");
+    expect(r.all).toEqual(new Set([11, 2, 5, 9]));
+  });
+
+  it("returns the augmented triad", () => {
+    const r = chordPitchClasses(0, "aug");
+    expect(r.all).toEqual(new Set([0, 4, 8]));
+    expect(r.third).toBe(4);
+    expect(r.fifth).toBe(8);
+  });
+
+  it("returns the add9 four-note set", () => {
+    const r = chordPitchClasses(0, "add9");
+    expect(r.all).toEqual(new Set([0, 2, 4, 7]));
+    expect(r.third).toBe(4);
+    expect(r.fifth).toBe(7);
   });
 });

@@ -15,7 +15,9 @@ import { WaveformPlayer } from "@/components/WaveformPlayer";
 import { ProgressionEditor } from "@/components/ProgressionEditor";
 import { Metronome } from "@/components/Metronome";
 import { TimbreVisualizer } from "@/components/TimbreVisualizer";
+import { Tuner } from "@/components/Tuner";
 import { SoloGenerator } from "@/components/SoloGenerator";
+import { RiffGenerator } from "@/components/RiffGenerator";
 import { useMicStream } from "@/lib/audio/useMicStream";
 import { usePitchDetector, type DetectedNote } from "@/lib/audio/usePitchDetector";
 import { analyzeAudioBuffer, decodeArrayBuffer } from "@/lib/audio/analyzeBuffer";
@@ -29,15 +31,16 @@ import {
   type ChordEvent,
 } from "@/lib/music/progression";
 import { chordPitchClasses, parseChord } from "@/lib/music/chords";
-import { TUNING_PRESETS, STANDARD_TUNING_PRESET, type TuningPreset } from "@/lib/guitar/tunings";
+import { DEFAULT_TUNING_ID, getTuning } from "@/lib/guitar/tunings";
 import { downloadMidi } from "@/lib/export/midi";
 import { diatonicTriads } from "@/lib/music/diatonicChords";
 import { findVoicings, type Voicing } from "@/lib/guitar/chordVoicings";
 import { DiatonicChords } from "@/components/DiatonicChords";
-import { TunerDisplay } from "@/components/TunerDisplay";
 
 const NUM_FRETS = 22;
 const TUNING_STORAGE_KEY = "guitarmode:tuning:v1";
+const TUNING_OFFSETS_STORAGE_KEY = "guitarmode:tuning-offsets:v1";
+const EMPTY_OFFSETS: number[] = [0, 0, 0, 0, 0, 0];
 const HIGH_CONTRAST_KEY = "guitarmode:high-contrast:v1";
 const CAPO_KEY = "guitarmode:capo:v1";
 const DEGREE_NAMES = ["1","♭2","2","♭3","3","4","♯4","5","♭6","6","♭7","7"] as const;
@@ -52,7 +55,6 @@ export default function Home() {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [lastAudioBuffer, setLastAudioBuffer] = useState<AudioBuffer | null>(null);
 
-  const [tuning, setTuningState] = useState<TuningPreset>(STANDARD_TUNING_PRESET);
   const [highContrast, setHighContrastState] = useState(false);
   const [showDegrees, setShowDegrees] = useState(false);
   const [capoFret, setCapoFretState] = useState(0);
@@ -60,24 +62,14 @@ export default function Home() {
   const [activeVoicing, setActiveVoicing] = useState<Voicing | null>(null);
   const [snappedChordMatches, setSnappedChordMatches] = useState<ChordMatch[] | null>(null);
 
-  // Persist tuning and high-contrast selections
+  // Persist high-contrast and capo selections
   useEffect(() => {
     try {
-      const saved = window.localStorage.getItem(TUNING_STORAGE_KEY);
-      if (saved) {
-        const preset = TUNING_PRESETS.find((p) => p.id === saved);
-        if (preset) setTuningState(preset);
-      }
       const hc = window.localStorage.getItem(HIGH_CONTRAST_KEY);
       if (hc === "1") setHighContrastState(true);
       const capo = window.localStorage.getItem(CAPO_KEY);
       if (capo) setCapoFretState(Math.max(0, Math.min(12, Number(capo) || 0)));
     } catch {}
-  }, []);
-
-  const handleTuningChange = useCallback((preset: TuningPreset) => {
-    setTuningState(preset);
-    try { window.localStorage.setItem(TUNING_STORAGE_KEY, preset.id); } catch {}
   }, []);
 
   const handleHighContrastChange = useCallback((v: boolean) => {
@@ -88,10 +80,6 @@ export default function Home() {
   const handleCapoChange = useCallback((n: number) => {
     setCapoFretState(n);
     try { window.localStorage.setItem(CAPO_KEY, String(n)); } catch {}
-  }, []);
-
-  const handleDiatonicSelect = useCallback((degree: number) => {
-    setSelectedDiatonicDegree((prev) => (prev === degree ? null : degree));
   }, []);
 
   // Mirror mic errors into appError so the most recent error wins over a stale one.
@@ -112,13 +100,98 @@ export default function Home() {
   const [boxCenterFret, setBoxCenterFret] = useState(7);
   const [boxWindow, setBoxWindow] = useState(5);
 
+  // RiffGenerator overlay: when the AI-generated riff loads, light up its
+  // pitch classes on the fretboard and follow the playhead with a pulse.
+  const [riffPitchClasses, setRiffPitchClasses] = useState<Set<number> | undefined>(undefined);
+  const [riffRoot, setRiffRoot] = useState<number | null>(null);
+  const [riffPlayingPc, setRiffPlayingPc] = useState<number | null>(null);
+  const handleRiffNotes = useCallback((pcs: Set<number>, root: number | null) => {
+    setRiffPitchClasses(pcs);
+    setRiffRoot(root);
+  }, []);
+
+  const [tuningId, setTuningId] = useState<string>(DEFAULT_TUNING_ID);
+  const tuningHydratedRef = useRef(false);
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      tuningHydratedRef.current = true;
+      return;
+    }
+    try {
+      const saved = window.localStorage.getItem(TUNING_STORAGE_KEY);
+      if (saved) setTuningId(saved);
+    } catch {
+      /* ignore */
+    }
+    tuningHydratedRef.current = true;
+  }, []);
+  useEffect(() => {
+    if (!tuningHydratedRef.current || typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(TUNING_STORAGE_KEY, tuningId);
+    } catch {
+      /* ignore */
+    }
+  }, [tuningId]);
+  const tuning = useMemo(() => getTuning(tuningId), [tuningId]);
+
+  const [tuningOffsets, setTuningOffsets] = useState<number[]>(EMPTY_OFFSETS);
+  const offsetsHydratedRef = useRef(false);
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      offsetsHydratedRef.current = true;
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(TUNING_OFFSETS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as unknown;
+        if (
+          Array.isArray(parsed) &&
+          parsed.length === 6 &&
+          parsed.every((n) => typeof n === "number" && Number.isFinite(n))
+        ) {
+          setTuningOffsets(parsed as number[]);
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    offsetsHydratedRef.current = true;
+  }, []);
+  useEffect(() => {
+    if (!offsetsHydratedRef.current || typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        TUNING_OFFSETS_STORAGE_KEY,
+        JSON.stringify(tuningOffsets)
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [tuningOffsets]);
+  const setOffsetAt = useCallback((i: number, cents: number) => {
+    setTuningOffsets((prev) => {
+      const next = prev.slice();
+      next[i] = Math.max(-50, Math.min(50, cents));
+      return next;
+    });
+  }, []);
+  const resetOffsets = useCallback(() => setTuningOffsets(EMPTY_OFFSETS), []);
+
   const [progression, setProgressionState] = useState<ChordEvent[]>([]);
-  const [currentChord, setCurrentChord] = useState<ChordEvent | null>(null);
+  // Two possible sources for the currently-active chord: time-driven from a
+  // loaded waveform, or live-driven from the standalone progression player.
+  // Player wins when it's running so the fretboard tracks the synth.
+  const [waveformChord, setWaveformChord] = useState<ChordEvent | null>(null);
+  const [playbackChord, setPlaybackChord] = useState<ChordEvent | null>(null);
+  const currentChord = playbackChord ?? waveformChord;
 
   const setProgression = useCallback((next: ChordEvent[]) => {
     const sorted = sortProgression(next);
     setProgressionState(sorted);
-    setCurrentChord(null);
+    setWaveformChord(null);
+    setPlaybackChord(null);
   }, []);
 
   const chordInfo = useMemo(() => {
@@ -145,6 +218,25 @@ export default function Home() {
 
   const selected = selectedIndex != null ? matches[selectedIndex] ?? null : null;
 
+  const handleDiatonicSelect = useCallback((degree: number) => {
+    setSelectedDiatonicDegree((prev) => {
+      const next = prev === degree ? null : degree;
+      if (next == null || !selected) {
+        setActiveVoicing(null);
+        return null;
+      }
+      const triads = diatonicTriads(selected.template, selected.root);
+      const triad = triads.find((t) => t.degree === next);
+      if (triad) {
+        const voicings = findVoicings(triad.root, triad.quality, tuning.midi);
+        setActiveVoicing(voicings[0] ?? null);
+      } else {
+        setActiveVoicing(null);
+      }
+      return next;
+    });
+  }, [selected, tuning]);
+
   const handleToggleMic = useCallback(async () => {
     if (detector.active) {
       detector.stop();
@@ -157,6 +249,7 @@ export default function Home() {
       await detector.start(stream);
     } catch (e) {
       if (mic.streamRef.current) {
+        mic.stop();
         setAppError(e instanceof Error ? e.message : "Could not start analysis");
       }
     }
@@ -175,6 +268,7 @@ export default function Home() {
         if (wasActive) await detector.start(stream);
       } catch (e) {
         if (mic.streamRef.current) {
+          mic.stop();
           setAppError(e instanceof Error ? e.message : "Could not switch input");
         }
       }
@@ -234,13 +328,27 @@ export default function Home() {
     };
     try {
       const stream = mic.streamRef.current ?? (await mic.start(mic.currentDeviceId));
-      const recorder = new MediaRecorder(stream);
+      // Pick a MIME the browser actually supports — Safari can't record webm.
+      // Reuse the chosen type for the Blob so decoding doesn't see a mismatch.
+      const candidates = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/mp4",
+        "audio/ogg",
+      ];
+      const mimeType = candidates.find(
+        (m) => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m)
+      );
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+      const blobType = recorder.mimeType || mimeType || "audio/webm";
       recordedChunksRef.current = [];
       recorder.ondataavailable = (ev) => {
         if (ev.data.size > 0) recordedChunksRef.current.push(ev.data);
       };
       recorder.onstop = async () => {
-        const blob = new Blob(recordedChunksRef.current, { type: "audio/webm" });
+        const blob = new Blob(recordedChunksRef.current, { type: blobType });
         recordedChunksRef.current = [];
         if (mountedRef.current) setAnalyzing(true);
         try {
@@ -397,14 +505,16 @@ export default function Home() {
         />
       </section>
 
-      {detector.currentNote && (
-        <section className="mb-4 sm:mb-6">
-          <TunerDisplay
-            frequency={detector.currentNote.frequency}
-            a4Hz={detector.config.a4Hz}
-          />
-        </section>
-      )}
+      <section className="mb-4 sm:mb-6">
+        <Tuner
+          micOn={detector.active}
+          frequency={detector.currentNote?.frequency ?? null}
+          a4Hz={detector.config.a4Hz}
+          tuning={tuning}
+          tuningOffsetsCents={tuningOffsets}
+        />
+      </section>
+
 
       <section className="mb-4 sm:mb-6">
         <InputSettings
@@ -414,8 +524,12 @@ export default function Home() {
           currentDeviceId={mic.currentDeviceId}
           onDeviceChange={handleDeviceChange}
           micOn={detector.active}
+          tuningId={tuningId}
+          onTuningChange={setTuningId}
           tuning={tuning}
-          onTuningChange={handleTuningChange}
+          tuningOffsetsCents={tuningOffsets}
+          onTuningOffsetChange={setOffsetAt}
+          onResetTuningOffsets={resetOffsets}
           highContrast={highContrast}
           onHighContrastChange={handleHighContrastChange}
         />
@@ -441,7 +555,7 @@ export default function Home() {
           {lastAudioBuffer && (
             <WaveformPlayer
               audioBuffer={lastAudioBuffer}
-              onTimeUpdate={(t) => setCurrentChord(activeChordAt(progression, t))}
+              onTimeUpdate={(t) => setWaveformChord(activeChordAt(progression, t))}
             />
           )}
         </div>
@@ -454,6 +568,7 @@ export default function Home() {
             selectedIndex={selectedIndex}
             onSelect={setSelectedIndex}
             detectedCount={playedPitchClasses.size}
+            a4Hz={detector.config.a4Hz}
           />
           {detector.notes.length >= 2 && (
             <ChordSuggestions
@@ -510,6 +625,13 @@ export default function Home() {
       </section>
 
       <section className="mb-4 sm:mb-6">
+        <RiffGenerator
+          onRiffNotes={handleRiffNotes}
+          onRiffNoteActive={setRiffPlayingPc}
+        />
+      </section>
+
+      <section className="mb-4 sm:mb-6">
         <Metronome />
       </section>
 
@@ -518,6 +640,8 @@ export default function Home() {
           progression={progression}
           onChange={setProgression}
           currentChord={currentChord?.chord ?? null}
+          a4Hz={detector.config.a4Hz}
+          onPlaybackChordChange={setPlaybackChord}
         />
       </section>
 
@@ -558,16 +682,15 @@ export default function Home() {
         <Fretboard
           numFrets={NUM_FRETS}
           tuning={tuning.midi}
-          stringLabels={tuning.stringLabels}
           highContrast={highContrast}
           showDegrees={showDegrees}
           degreeMap={degreeMap}
           capo={capoFret}
           voicingPositions={activeVoicing ?? undefined}
           playedPitchClasses={playedPitchClasses}
-          scalePitchClasses={scaleSet}
-          rootPitchClass={selected?.root ?? null}
-          currentPitchClass={detector.currentNote?.pitchClass ?? null}
+          scalePitchClasses={riffPitchClasses ?? scaleSet}
+          rootPitchClass={riffRoot ?? selected?.root ?? null}
+          currentPitchClass={riffPlayingPc ?? detector.currentNote?.pitchClass ?? null}
           chordPitchClasses={chordInfo?.all}
           chordRootPitchClass={chordInfo?.root ?? null}
           chordThirdPitchClass={chordInfo?.third ?? null}
