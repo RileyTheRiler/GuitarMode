@@ -13,6 +13,10 @@ type Props = {
   onExportMidi?: () => void;
   recording: boolean;
   analyzing: boolean;
+  // 0..1 progress for long-running offline analysis (e.g. Basic Pitch model
+  // load + inference). Null when no progress is being reported.
+  analyzeProgress?: number | null;
+  analyzeLabel?: string | null;
   level: number;
   error?: string | null;
   hasNotes?: boolean;
@@ -28,6 +32,8 @@ export function MicControls({
   onExportMidi,
   recording,
   analyzing,
+  analyzeProgress,
+  analyzeLabel,
   level,
   error,
   hasNotes = false,
@@ -144,7 +150,19 @@ export function MicControls({
             Recording…
           </span>
         )}
-        {analyzing && !recording && <span>Analyzing…</span>}
+        {analyzing && !recording && (
+          <div className="flex flex-col gap-1">
+            <span>{analyzeLabel ?? "Analyzing…"}</span>
+            {typeof analyzeProgress === "number" && (
+              <div className="h-0.5 w-40 overflow-hidden rounded-full bg-zinc-800">
+                <div
+                  className="h-full bg-emerald-500 transition-[width] duration-150"
+                  style={{ width: `${Math.max(0, Math.min(1, analyzeProgress)) * 100}%` }}
+                />
+              </div>
+            )}
+          </div>
+        )}
         {fileName && !analyzing && !recording && <span>Loaded: {fileName}</span>}
         {error && (
           <span role="alert" className="text-rose-400">

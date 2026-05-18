@@ -11,3 +11,7 @@ dist
 next-env.d.ts.bak
 tsconfig.tsbuildinfo
 coverage
+
+# Basic Pitch model files are copied from node_modules at build time
+# by scripts/copy-basic-pitch-model.mjs (see "prebuild").
+/public/models/basic-pitch/

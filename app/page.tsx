@@ -22,6 +22,7 @@ import { SoloGuide } from "@/components/SoloGuide";
 import { useMicStream } from "@/lib/audio/useMicStream";
 import { usePitchDetector, type DetectedNote } from "@/lib/audio/usePitchDetector";
 import { analyzeAudioBuffer, decodeArrayBuffer } from "@/lib/audio/analyzeBuffer";
+import { analyzeWithBasicPitch } from "@/lib/audio/basicPitch";
 import { detectScales } from "@/lib/music/detectScale";
 import { detectChords, type ChordMatch } from "@/lib/music/detectChord";
 import { buildProfile, profilePitchClassSet } from "@/lib/music/profile";
@@ -53,6 +54,8 @@ export default function Home() {
   const detector = usePitchDetector();
 
   const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeProgress, setAnalyzeProgress] = useState<number | null>(null);
+  const [analyzeLabel, setAnalyzeLabel] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [appError, setAppError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -293,28 +296,48 @@ export default function Home() {
     async (file: File) => {
       setAppError(null);
       if (detector.active) detector.stop();
+      const useBasicPitch =
+        detector.config.polyphonic && detector.config.polyphonicEngine === "basic-pitch";
       setAnalyzing(true);
+      setAnalyzeProgress(useBasicPitch ? 0 : null);
+      setAnalyzeLabel(useBasicPitch ? "Loading model & analyzing…" : null);
       try {
         const arr = await file.arrayBuffer();
         const buffer = await decodeArrayBuffer(arr);
-        const result = await analyzeAudioBuffer(buffer, {
-          a4Hz: detector.config.a4Hz,
-          polyphonic: detector.config.polyphonic,
-          minClarity: detector.config.minClarity,
-          minRms: detector.config.minRms,
-          highPass: detector.config.highPass,
-          highPassHz: detector.config.highPassHz,
-        });
-        if (!mountedRef.current) return;
-        detector.reset();
-        detector.addNotes(result.notes);
-        if (result.chroma.some((v) => v > 0)) detector.addChroma(result.chroma);
+        if (useBasicPitch) {
+          const notes = await analyzeWithBasicPitch(buffer, {
+            a4Hz: detector.config.a4Hz,
+            onProgress: (p) => {
+              if (mountedRef.current) setAnalyzeProgress(p);
+            },
+          });
+          if (!mountedRef.current) return;
+          detector.reset();
+          detector.addNotes(notes);
+        } else {
+          const result = await analyzeAudioBuffer(buffer, {
+            a4Hz: detector.config.a4Hz,
+            polyphonic: detector.config.polyphonic,
+            minClarity: detector.config.minClarity,
+            minRms: detector.config.minRms,
+            highPass: detector.config.highPass,
+            highPassHz: detector.config.highPassHz,
+          });
+          if (!mountedRef.current) return;
+          detector.reset();
+          detector.addNotes(result.notes);
+          if (result.chroma.some((v) => v > 0)) detector.addChroma(result.chroma);
+        }
         setLastAudioBuffer(buffer);
       } catch (e) {
         if (!mountedRef.current) return;
         setAppError(e instanceof Error ? e.message : "Could not analyze file");
       } finally {
-        if (mountedRef.current) setAnalyzing(false);
+        if (mountedRef.current) {
+          setAnalyzing(false);
+          setAnalyzeProgress(null);
+          setAnalyzeLabel(null);
+        }
       }
     },
     [detector]
@@ -327,11 +350,13 @@ export default function Home() {
     const cfgSnapshot = {
       a4Hz: detector.config.a4Hz,
       polyphonic: detector.config.polyphonic,
+      polyphonicEngine: detector.config.polyphonicEngine,
       minClarity: detector.config.minClarity,
       minRms: detector.config.minRms,
       highPass: detector.config.highPass,
       highPassHz: detector.config.highPassHz,
     };
+    const useBasicPitch = cfgSnapshot.polyphonic && cfgSnapshot.polyphonicEngine === "basic-pitch";
     try {
       const stream = mic.streamRef.current ?? (await mic.start(mic.currentDeviceId));
       // Pick a MIME the browser actually supports — Safari can't record webm.
@@ -356,22 +381,44 @@ export default function Home() {
       recorder.onstop = async () => {
         const blob = new Blob(recordedChunksRef.current, { type: blobType });
         recordedChunksRef.current = [];
-        if (mountedRef.current) setAnalyzing(true);
+        if (mountedRef.current) {
+          setAnalyzing(true);
+          setAnalyzeProgress(useBasicPitch ? 0 : null);
+          setAnalyzeLabel(useBasicPitch ? "Loading model & analyzing…" : null);
+        }
         try {
           const arr = await blob.arrayBuffer();
           const buffer = await decodeArrayBuffer(arr);
-          const result = await analyzeAudioBuffer(buffer, cfgSnapshot);
-          if (!mountedRef.current || gen !== recordingGenRef.current) return;
-          const newNotes: DetectedNote[] = result.notes;
-          detector.reset();
-          detector.addNotes(newNotes);
-          if (result.chroma.some((v) => v > 0)) detector.addChroma(result.chroma);
+          if (useBasicPitch) {
+            const notes = await analyzeWithBasicPitch(buffer, {
+              a4Hz: cfgSnapshot.a4Hz,
+              onProgress: (p) => {
+                if (mountedRef.current && gen === recordingGenRef.current) {
+                  setAnalyzeProgress(p);
+                }
+              },
+            });
+            if (!mountedRef.current || gen !== recordingGenRef.current) return;
+            detector.reset();
+            detector.addNotes(notes);
+          } else {
+            const result = await analyzeAudioBuffer(buffer, cfgSnapshot);
+            if (!mountedRef.current || gen !== recordingGenRef.current) return;
+            const newNotes: DetectedNote[] = result.notes;
+            detector.reset();
+            detector.addNotes(newNotes);
+            if (result.chroma.some((v) => v > 0)) detector.addChroma(result.chroma);
+          }
           setLastAudioBuffer(buffer);
         } catch (e) {
           if (!mountedRef.current || gen !== recordingGenRef.current) return;
           setAppError(e instanceof Error ? e.message : "Could not analyze recording");
         } finally {
-          if (mountedRef.current && gen === recordingGenRef.current) setAnalyzing(false);
+          if (mountedRef.current && gen === recordingGenRef.current) {
+            setAnalyzing(false);
+            setAnalyzeProgress(null);
+            setAnalyzeLabel(null);
+          }
         }
       };
       mediaRecorderRef.current = recorder;
@@ -497,6 +544,8 @@ export default function Home() {
           onExportMidi={handleExportMidi}
           recording={recording}
           analyzing={analyzing}
+          analyzeProgress={analyzeProgress}
+          analyzeLabel={analyzeLabel}
           level={detector.level}
           error={appError}
           hasNotes={detector.notes.length > 0}

@@ -37,9 +37,11 @@ No env vars, no config needed. Vercel's HTTPS is required for microphone access.
 
 ## Notes & limitations
 
-- **Monophonic only.** `pitchy` is a monophonic detector; chords won't resolve cleanly. Use single-note lines.
+- **Live mic is monophonic** (`pitchy`'s YIN detector). For chords, enable **Polyphonic mode** in the Input settings — live still uses a fast chromagram, and for **uploads or recordings** you can switch the engine to **Basic Pitch** (Spotify's open-source polyphonic transcription model). Basic Pitch loads lazily on first opt-in (~1 MB model + TensorFlow.js chunks) and is offline-only.
 - **Clean tone works best.** Heavy distortion and palm-muting confuse YIN.
 - **Tunings.** Standard, Drop D, half-step down, full-step down, Open G, and DADGAD ship out of the box (see `lib/guitar/tunings.ts`). The fretboard, scale matcher, and built-in tuner all follow the selected tuning.
+
+The `prebuild` / `predev` scripts copy Basic Pitch's model files out of `node_modules/@spotify/basic-pitch/model/` and into `public/models/basic-pitch/`. The destination is gitignored — it's regenerated on every install + build.
 
 ## Project layout
 

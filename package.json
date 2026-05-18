@@ -4,15 +4,18 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node scripts/copy-basic-pitch-model.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "predev": "node scripts/copy-basic-pitch-model.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",
+    "@spotify/basic-pitch": "^1.0.1",
     "next": "^15.0.3",
     "pitchy": "^4.1.0",
     "react": "^19.0.0",

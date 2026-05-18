@@ -21,6 +21,8 @@ export type DetectedNote = {
   endAt: number;
 };
 
+export type PolyphonicEngine = "chromagram" | "basic-pitch";
+
 export type PitchDetectorConfig = {
   minFreq: number;
   maxFreq: number;
@@ -31,6 +33,7 @@ export type PitchDetectorConfig = {
   highPass: boolean;
   highPassHz: number;
   polyphonic: boolean;
+  polyphonicEngine: PolyphonicEngine;
   silenceFramesToRelease: number;
 };
 
@@ -44,6 +47,7 @@ export const DEFAULT_CONFIG: PitchDetectorConfig = {
   highPass: true,
   highPassHz: 80,
   polyphonic: false,
+  polyphonicEngine: "chromagram",
   silenceFramesToRelease: 10,
 };
 

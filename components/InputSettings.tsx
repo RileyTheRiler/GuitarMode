@@ -172,8 +172,33 @@ export function InputSettings({
             checked={config.polyphonic}
             onChange={(e) => onChange({ polyphonic: e.target.checked })}
           />
-          Polyphonic mode (chord/chroma detection) &mdash; experimental
+          Polyphonic mode (chord detection)
         </label>
+
+        {config.polyphonic && (
+          <label className="flex flex-col gap-1 text-xs text-zinc-400 sm:col-span-2">
+            <span>Polyphonic engine</span>
+            <select
+              className="rounded bg-zinc-800 px-2 py-1 text-sm text-zinc-100"
+              value={config.polyphonicEngine}
+              onChange={(e) =>
+                onChange({
+                  polyphonicEngine: e.target.value as "chromagram" | "basic-pitch",
+                })
+              }
+            >
+              <option value="chromagram">Chromagram &mdash; fast, live + offline</option>
+              <option value="basic-pitch">Basic Pitch &mdash; accurate, offline only</option>
+            </select>
+            {config.polyphonicEngine === "basic-pitch" && (
+              <span className="text-[10px] text-zinc-500">
+                Loads a ~1 MB model + TensorFlow.js on first use. Only runs on
+                uploaded files and finished recordings &mdash; live mic stays on
+                the chromagram.
+              </span>
+            )}
+          </label>
+        )}
 
         <label className="flex items-center gap-2 text-xs text-zinc-400 sm:col-span-2">
           <input
