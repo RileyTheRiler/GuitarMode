@@ -15,6 +15,7 @@ import { Metronome } from "@/components/Metronome";
 import { TimbreVisualizer } from "@/components/TimbreVisualizer";
 import { Tuner } from "@/components/Tuner";
 import { SoloGenerator } from "@/components/SoloGenerator";
+import { RiffGenerator } from "@/components/RiffGenerator";
 import { useMicStream } from "@/lib/audio/useMicStream";
 import { usePitchDetector, type DetectedNote } from "@/lib/audio/usePitchDetector";
 import { analyzeAudioBuffer, decodeArrayBuffer } from "@/lib/audio/analyzeBuffer";
@@ -61,6 +62,16 @@ export default function Home() {
   const [boxOn, setBoxOn] = useState(false);
   const [boxCenterFret, setBoxCenterFret] = useState(7);
   const [boxWindow, setBoxWindow] = useState(5);
+
+  // RiffGenerator overlay: when the AI-generated riff loads, light up its
+  // pitch classes on the fretboard and follow the playhead with a pulse.
+  const [riffPitchClasses, setRiffPitchClasses] = useState<Set<number> | undefined>(undefined);
+  const [riffRoot, setRiffRoot] = useState<number | null>(null);
+  const [riffPlayingPc, setRiffPlayingPc] = useState<number | null>(null);
+  const handleRiffNotes = useCallback((pcs: Set<number>, root: number | null) => {
+    setRiffPitchClasses(pcs);
+    setRiffRoot(root);
+  }, []);
 
   const [tuningId, setTuningId] = useState<string>(DEFAULT_TUNING_ID);
   const tuningHydratedRef = useRef(false);
@@ -468,6 +479,13 @@ export default function Home() {
       </section>
 
       <section className="mb-4 sm:mb-6">
+        <RiffGenerator
+          onRiffNotes={handleRiffNotes}
+          onRiffNoteActive={setRiffPlayingPc}
+        />
+      </section>
+
+      <section className="mb-4 sm:mb-6">
         <Metronome />
       </section>
 
@@ -500,9 +518,9 @@ export default function Home() {
           numFrets={NUM_FRETS}
           tuning={tuning.midi}
           playedPitchClasses={playedPitchClasses}
-          scalePitchClasses={scaleSet}
-          rootPitchClass={selected?.root ?? null}
-          currentPitchClass={detector.currentNote?.pitchClass ?? null}
+          scalePitchClasses={riffPitchClasses ?? scaleSet}
+          rootPitchClass={riffRoot ?? selected?.root ?? null}
+          currentPitchClass={riffPlayingPc ?? detector.currentNote?.pitchClass ?? null}
           chordPitchClasses={chordInfo?.all}
           chordRootPitchClass={chordInfo?.root ?? null}
           chordThirdPitchClass={chordInfo?.third ?? null}
