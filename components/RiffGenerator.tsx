@@ -63,12 +63,40 @@ function saveToDisk(riffs: SavedRiff[]) {
   } catch {}
 }
 
+export type RiffInitialContext = {
+  song?: string;
+  artist?: string;
+  key?: string;
+  bpm?: number;
+  chords?: string;
+};
+
 type Props = {
   onRiffNotes: (pitchClasses: Set<number>, root: number | null) => void;
   onRiffNoteActive: (pitchClass: number | null) => void;
+  initialContext?: RiffInitialContext | null;
 };
 
-export function RiffGenerator({ onRiffNotes, onRiffNoteActive }: Props) {
+function parseKeyString(key: string): { root: string; quality: "major" | "minor" } | null {
+  const m = key.trim().match(/^([A-G][#b]?)\s*(.*)$/i);
+  if (!m) return null;
+  let root = m[1];
+  if (root.length === 2 && root[1] === "b") {
+    const flats: Record<string, string> = {
+      Db: "C#",
+      Eb: "D#",
+      Gb: "F#",
+      Ab: "G#",
+      Bb: "A#",
+    };
+    root = flats[root] ?? root;
+  }
+  const rest = m[2].toLowerCase();
+  const quality: "major" | "minor" = rest.includes("min") || rest.startsWith("m") ? "minor" : "major";
+  return { root, quality };
+}
+
+export function RiffGenerator({ onRiffNotes, onRiffNoteActive, initialContext }: Props) {
   const [song, setSong] = useState("");
   const [artist, setArtist] = useState("");
   const [keyRoot, setKeyRoot] = useState("A");
@@ -98,6 +126,21 @@ export function RiffGenerator({ onRiffNotes, onRiffNoteActive }: Props) {
   useEffect(() => {
     setSavedRiffs(loadSaved());
   }, []);
+
+  useEffect(() => {
+    if (!initialContext) return;
+    if (initialContext.song !== undefined) setSong(initialContext.song);
+    if (initialContext.artist !== undefined) setArtist(initialContext.artist);
+    if (initialContext.chords !== undefined) setChords(initialContext.chords);
+    if (initialContext.bpm !== undefined) setBpm(String(initialContext.bpm));
+    if (initialContext.key) {
+      const parsed = parseKeyString(initialContext.key);
+      if (parsed) {
+        setKeyRoot(parsed.root);
+        setKeyQuality(parsed.quality);
+      }
+    }
+  }, [initialContext]);
 
   const stopPlayback = useCallback(() => {
     playTimersRef.current.forEach(clearTimeout);

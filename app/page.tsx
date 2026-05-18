@@ -17,7 +17,7 @@ import { Metronome } from "@/components/Metronome";
 import { TimbreVisualizer } from "@/components/TimbreVisualizer";
 import { Tuner } from "@/components/Tuner";
 import { SoloGenerator } from "@/components/SoloGenerator";
-import { RiffGenerator } from "@/components/RiffGenerator";
+import { RiffGenerator, type RiffInitialContext } from "@/components/RiffGenerator";
 import { SoloGuide } from "@/components/SoloGuide";
 import { useMicStream } from "@/lib/audio/useMicStream";
 import { usePitchDetector, type DetectedNote } from "@/lib/audio/usePitchDetector";
@@ -40,6 +40,8 @@ import { findVoicings, type Voicing } from "@/lib/guitar/chordVoicings";
 import { DiatonicChords } from "@/components/DiatonicChords";
 import { SCALE_TEMPLATES } from "@/lib/music/scales";
 import { soloScalePitchClasses } from "@/lib/music/soloGuide";
+import { sheetToDetectedNotes } from "@/lib/sheet/sheetToNotes";
+import type { SheetAnalysis } from "@/lib/sheet/types";
 
 const NUM_FRETS = 22;
 const TUNING_STORAGE_KEY = "guitarmode:tuning:v1";
@@ -60,6 +62,7 @@ export default function Home() {
   const [appError, setAppError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [lastAudioBuffer, setLastAudioBuffer] = useState<AudioBuffer | null>(null);
+  const [riffContext, setRiffContext] = useState<RiffInitialContext | null>(null);
 
   const [highContrast, setHighContrastState] = useState(false);
   const [showDegrees, setShowDegrees] = useState(false);
@@ -343,6 +346,52 @@ export default function Home() {
     [detector]
   );
 
+  const handleUploadPdf = useCallback(
+    async (file: File) => {
+      setAppError(null);
+      if (detector.active) detector.stop();
+      setAnalyzing(true);
+      setAnalyzeProgress(null);
+      setAnalyzeLabel("Reading sheet music…");
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        const res = await fetch("/api/analyze-sheet", { method: "POST", body: form });
+        if (!res.ok) {
+          let msg = `Request failed (${res.status})`;
+          try {
+            const errBody = (await res.json()) as { error?: string };
+            if (errBody?.error) msg = errBody.error;
+          } catch {}
+          throw new Error(msg);
+        }
+        const analysis = (await res.json()) as SheetAnalysis;
+        if (!mountedRef.current) return;
+        const notes = sheetToDetectedNotes(analysis, { a4Hz: detector.config.a4Hz });
+        detector.reset();
+        if (notes.length > 0) detector.addNotes(notes);
+        setLastAudioBuffer(null);
+        setRiffContext({
+          song: analysis.title || "",
+          artist: analysis.artist || "",
+          key: analysis.key || "",
+          bpm: analysis.bpm ?? undefined,
+          chords: analysis.chordsText || "",
+        });
+      } catch (e) {
+        if (!mountedRef.current) return;
+        setAppError(e instanceof Error ? e.message : "Could not analyze PDF");
+      } finally {
+        if (mountedRef.current) {
+          setAnalyzing(false);
+          setAnalyzeProgress(null);
+          setAnalyzeLabel(null);
+        }
+      }
+    },
+    [detector]
+  );
+
   const handleStartRecording = useCallback(async () => {
     setAppError(null);
     if (detector.active) detector.stop();
@@ -539,6 +588,7 @@ export default function Home() {
           onToggleMic={handleToggleMic}
           onReset={handleReset}
           onUpload={handleUpload}
+          onUploadPdf={handleUploadPdf}
           onStartRecording={handleStartRecording}
           onStopRecording={handleStopRecording}
           onExportMidi={handleExportMidi}
@@ -683,6 +733,7 @@ export default function Home() {
         <RiffGenerator
           onRiffNotes={handleRiffNotes}
           onRiffNoteActive={setRiffPlayingPc}
+          initialContext={riffContext}
         />
       </section>
 

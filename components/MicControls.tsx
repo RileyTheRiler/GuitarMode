@@ -8,6 +8,7 @@ type Props = {
   onToggleMic: () => void;
   onReset: () => void;
   onUpload: (file: File) => void;
+  onUploadPdf?: (file: File) => void;
   onStartRecording: () => void;
   onStopRecording: () => void;
   onExportMidi?: () => void;
@@ -27,6 +28,7 @@ export function MicControls({
   onToggleMic,
   onReset,
   onUpload,
+  onUploadPdf,
   onStartRecording,
   onStopRecording,
   onExportMidi,
@@ -39,6 +41,7 @@ export function MicControls({
   hasNotes = false,
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string | null>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -46,6 +49,14 @@ export function MicControls({
     if (!file) return;
     setFileName(file.name);
     onUpload(file);
+    e.target.value = "";
+  };
+
+  const handlePdfChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !onUploadPdf) return;
+    setFileName(file.name);
+    onUploadPdf(file);
     e.target.value = "";
   };
 
@@ -112,6 +123,31 @@ export function MicControls({
           className="hidden"
           onChange={handleFileChange}
         />
+
+        {onUploadPdf && (
+          <>
+            <button
+              type="button"
+              onClick={() => pdfInputRef.current?.click()}
+              title="Upload sheet music or tab (PDF) — Claude extracts the key and notes"
+              className="inline-flex items-center gap-2 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2.5 text-sm font-medium text-zinc-100 transition hover:bg-zinc-700"
+            >
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M3 1.5h7L13 4.5v10H3z" />
+                <path d="M10 1.5V4.5H13" />
+                <path d="M6 8h4M6 11h4" />
+              </svg>
+              Upload sheet music
+            </button>
+            <input
+              ref={pdfInputRef}
+              type="file"
+              accept="application/pdf,.pdf"
+              className="hidden"
+              onChange={handlePdfChange}
+            />
+          </>
+        )}
 
         {onExportMidi && hasNotes && (
           <button
