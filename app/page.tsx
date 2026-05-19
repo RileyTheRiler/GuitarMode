@@ -38,6 +38,8 @@ import { downloadMidi } from "@/lib/export/midi";
 import { diatonicTriads } from "@/lib/music/diatonicChords";
 import { findVoicings, type Voicing } from "@/lib/guitar/chordVoicings";
 import { DiatonicChords } from "@/components/DiatonicChords";
+import { CircleOfFifths } from "@/components/CircleOfFifths";
+import { EarTraining } from "@/components/EarTraining";
 import { SCALE_TEMPLATES } from "@/lib/music/scales";
 import { soloScalePitchClasses } from "@/lib/music/soloGuide";
 
@@ -645,6 +647,12 @@ export default function Home() {
               />
             </div>
           )}
+          <div className="mt-4">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+              Circle of Fifths
+            </h3>
+            <CircleOfFifths selectedMatch={selected} />
+          </div>
           {hasChroma && (
             <div className="mt-4">
               <ChromaChart chroma={detector.chromaProfile} />
@@ -688,6 +696,10 @@ export default function Home() {
 
       <section className="mb-4 sm:mb-6">
         <Metronome />
+      </section>
+
+      <section className="mb-4 sm:mb-6">
+        <EarTraining a4Hz={detector.config.a4Hz} />
       </section>
 
       <section className="mb-4 sm:mb-6">
