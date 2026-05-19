@@ -64,6 +64,44 @@ function rootFretOnString(rootPC: number, stringIndex: number, minFret = 3): num
   return fret;
 }
 
+// Style-specific lick pattern banks. Each pattern is an array of position-index deltas
+// applied cumulatively from the starting posIdx.
+type LickPattern = number[];
+const LICK_PATTERNS: Record<"rock" | "blues" | "jazz", LickPattern[]> = {
+  blues: [
+    [0, 2, -1, 1],           // root → b3 → approach → resolve
+    [0, 1, 0, 2, 0],         // hammer-pull b3 trill then resolve up
+    [0, 2, 4, 2, 0, -1],     // box-top turnaround
+    [0, -1, 1, 3, 2, 0],     // blues crying figure
+    [0, 0, 1, 0, -1, 0],     // trill motif
+    [0, 3, 2, 1, 0, 2],      // high-to-low resolve
+  ],
+  rock: [
+    [0, 2, 4, 3, 2, 0],      // pentatonic up-and-back
+    [0, 1, 3, 1, 0, -1],     // rock nail lick
+    [0, 2, -1, 2, 0],        // pentatonic skip
+    [0, 3, 2, 0, -1, 1, 0],  // Hendrix box lick
+    [0, 1, 2, 3, 2, 1, 0],   // linear ascending-descending
+    [0, 2, 0, 2, 0, 3],      // double-time pop figure
+  ],
+  jazz: [
+    [0, 1, 2, 3, 2, 1, 0, -1], // bebop 8th-note descending
+    [0, -1, 1, -1, 0, 2],      // chromatic encirclement
+    [0, 2, 1, 3, 2, 4],        // arpeggio outline with approach
+    [0, 1, 3, 5, 4, 2],        // guide-tone leap line
+    [0, 3, 2, 4, 3, 5, 4, 2],  // bebop scale run
+    [0, -1, -2, 1, 0, 2, 1],   // altered tension figure
+  ],
+};
+
+// Intensity curve across the solo: sparse intro → builds → peaks at 75% → releases.
+function soloIntensity(beat: number, totalBeats: number): number {
+  const t = beat / totalBeats;
+  if (t < 0.25) return 0.3 + t * 1.2;
+  if (t < 0.75) return 0.6 + (t - 0.25);
+  return Math.max(0.3, 1.1 - (t - 0.75) * 3.2);
+}
+
 export function generateSolo(params: SoloParams): GeneratedSolo {
   const {
     chords,
@@ -175,19 +213,54 @@ export function generateSolo(params: SoloParams): GeneratedSolo {
     return from;
   }
 
-  // 7. Phrase-based generation
+  // 7. Build seed motif for repetition. Captured once so it stays consistent per solo.
+  const motifIntervals = rng.pick(LICK_PATTERNS[style]).slice(0, rng.nextInt(3, 4));
+  const MOTIF_RHYTHM: Record<"rock" | "blues" | "jazz", number[]> = {
+    blues: [0.5, 0.5, 0.5, 0.5],
+    rock:  [0.25, 0.25, 0.5, 0.25],
+    jazz:  [0.25, 0.5, 0.25, 0.5],
+  };
+  const motifRhythm = MOTIF_RHYTHM[style];
+
+  // Style-specific duration palettes and base rest probabilities for the "run" shape.
+  const DURATIONS: Record<"rock" | "blues" | "jazz", number[]> = {
+    blues: [0.5, 0.5, 0.5, 0.25],
+    rock:  [0.25, 0.25, 0.5],
+    jazz:  [0.25, 0.5, 0.25, 0.25, 0.5],
+  };
+  const BASE_REST_CHANCE: Record<"rock" | "blues" | "jazz", number> = {
+    blues: 0.35,
+    rock:  0.20,
+    jazz:  0.25,
+  };
+  const durations = DURATIONS[style];
+  const baseRestChance = BASE_REST_CHANCE[style];
+
+  // 8. Phrase-based generation
   const notes: SoloNote[] = [];
   let beat = 0;
   let posIdx = Math.floor(positions.length * 0.4); // start in lower-mid of the box
   let phraseDir = 1; // +1 ascending, -1 descending
 
-  type Shape = "run" | "lick" | "hold" | "arpeggio";
+  // Helper: apply a lick pattern (cumulative position deltas) from the current posIdx/beat.
+  function playLick(pattern: LickPattern, noteDur: number, endBeat: number) {
+    for (const delta of pattern) {
+      if (beat >= endBeat - 0.01) break;
+      posIdx = Math.max(0, Math.min(positions.length - 1, posIdx + delta));
+      notes.push({ ...positions[posIdx], startBeat: beat, durationBeats: noteDur });
+      beat += noteDur;
+    }
+  }
+
+  type Shape = "run" | "lick" | "hold" | "arpeggio" | "motif" | "call_response";
+
+  // Full shape pools per style — used at medium intensity.
   const SHAPES: Shape[] =
     style === "jazz"
-      ? ["run", "lick", "arpeggio", "hold", "arpeggio"]
+      ? ["run", "lick", "arpeggio", "hold", "arpeggio", "motif", "call_response"]
       : style === "blues"
-      ? ["lick", "lick", "run", "hold", "lick"]
-      : ["run", "lick", "run", "hold", "run"];
+      ? ["lick", "lick", "run", "hold", "lick", "motif", "call_response"]
+      : ["run", "lick", "run", "hold", "run", "motif", "call_response"];
 
   while (beat < totalBeats - 0.01) {
     // Snap to chord tone at every chord boundary
@@ -196,37 +269,87 @@ export function generateSolo(params: SoloParams): GeneratedSolo {
       posIdx = nearestChordToneIdx(posIdx, chord);
     }
 
+    const curIntensity = soloIntensity(beat, totalBeats);
     const phraseBeats = rng.pick([2, 2, 2, 4]);
     const endBeat = Math.min(beat + phraseBeats, totalBeats);
-    const shape: Shape = rng.pick(SHAPES);
+
+    // Shift shape pool based on intensity arc: sparse at intro/outro, dense at peak.
+    let shapePool: Shape[];
+    if (curIntensity < 0.5) {
+      shapePool = style === "jazz"
+        ? ["hold", "call_response", "arpeggio", "motif"]
+        : ["hold", "call_response", "lick", "motif"];
+    } else if (curIntensity > 0.85) {
+      shapePool = style === "jazz"
+        ? ["run", "lick", "run", "arpeggio"]
+        : style === "blues"
+        ? ["lick", "lick", "run", "lick"]
+        : ["run", "run", "lick", "run"];
+    } else {
+      shapePool = SHAPES;
+    }
+
+    const shape: Shape = rng.pick(shapePool);
 
     if (shape === "hold") {
-      // Sustain the current note for 1–2 beats then rest briefly
       const dur = Math.min(rng.pick([0.5, 1, 1.5]), endBeat - beat);
       if (dur > 0) {
         notes.push({ ...positions[posIdx], startBeat: beat, durationBeats: dur });
         beat += dur;
       }
-      // Optional rest
       if (rng.next() < 0.6) beat += rng.pick([0.25, 0.5]);
 
     } else if (shape === "lick") {
-      // Short 3–5 note motif, played once or twice
-      const lickLen = rng.nextInt(3, 5);
-      const pattern: number[] = [posIdx];
-      for (let i = 1; i < lickLen; i++) {
-        const step = rng.pick([-2, -1, -1, 0, 1, 1, 2]);
-        pattern.push(Math.max(0, Math.min(positions.length - 1, pattern[i - 1] + step)));
-      }
-      const reps = rng.next() < 0.4 ? 2 : 1;
+      // Style-specific lick pattern with appropriate note duration.
+      const pattern = rng.pick(LICK_PATTERNS[style]);
+      const noteDur = style === "blues" ? 0.5 : style === "jazz" ? rng.pick([0.25, 0.5]) : 0.25;
+      const reps = rng.next() < 0.35 ? 2 : 1;
+      const startIdx = posIdx;
       for (let r = 0; r < reps && beat < endBeat - 0.01; r++) {
-        for (const idx of pattern) {
-          if (beat >= endBeat - 0.01) break;
-          notes.push({ ...positions[idx], startBeat: beat, durationBeats: 0.25 });
-          beat += 0.25;
-        }
+        posIdx = startIdx;
+        playLick(pattern, noteDur, endBeat);
       }
-      posIdx = pattern[pattern.length - 1];
+
+    } else if (shape === "motif") {
+      // Replay the seed motif with a variation: exact, transposed, or double-time burst.
+      const variation = rng.pick(["exact", "exact", "transposed", "double_time"] as const);
+      if (variation === "transposed") {
+        posIdx = Math.max(0, Math.min(
+          positions.length - 1,
+          posIdx + rng.pick([-4, -3, -2, 2, 3, 4])
+        ));
+      }
+      const rhythmMult = variation === "double_time" ? 0.5 : 1;
+      const startIdx = posIdx;
+      for (let i = 0; i < motifIntervals.length; i++) {
+        if (beat >= endBeat - 0.01) break;
+        posIdx = Math.max(0, Math.min(positions.length - 1, startIdx + motifIntervals[i]));
+        const dur = (motifRhythm[i] ?? 0.25) * rhythmMult;
+        notes.push({ ...positions[posIdx], startBeat: beat, durationBeats: dur });
+        beat += dur;
+      }
+
+    } else if (shape === "call_response" && endBeat - beat >= 3.5) {
+      // Call: short ascending phrase ending on a non-root scale tone.
+      const callEnd = Math.min(beat + 1.5, endBeat - 1.0);
+      while (beat < callEnd - 0.01) {
+        const dur = rng.pick(durations);
+        notes.push({ ...positions[posIdx], startBeat: beat, durationBeats: dur });
+        beat += dur;
+        posIdx = Math.min(positions.length - 1, posIdx + 1);
+      }
+
+      // Breath: silence between call and response.
+      beat += rng.pick([0.5, 0.5, 0.75, 1.0]);
+
+      // Response: resolve to nearest chord tone with a descending lick.
+      if (beat < endBeat - 0.01) {
+        const chord = chordAtBeat(beat);
+        posIdx = nearestChordToneIdx(posIdx, chord);
+        const pattern = rng.pick(LICK_PATTERNS[style]);
+        const noteDur = style === "blues" ? 0.5 : 0.25;
+        playLick(pattern, noteDur, endBeat);
+      }
 
     } else if (shape === "arpeggio") {
       // Walk chord tones only
@@ -241,7 +364,6 @@ export function generateSolo(params: SoloParams): GeneratedSolo {
           beat += noteDur;
           cpIdx = (cpIdx + phraseDir + chordPositions.length) % chordPositions.length;
         }
-        // update posIdx to closest match
         const last = chordPositions[(cpIdx - phraseDir + chordPositions.length) % chordPositions.length];
         const closest = positions.findIndex((p) => p.midi >= last.midi);
         if (closest >= 0) posIdx = closest;
@@ -250,25 +372,24 @@ export function generateSolo(params: SoloParams): GeneratedSolo {
       }
 
     } else {
-      // "run" — stepwise motion in phraseDir with rhythmic variety
+      // "run" — stepwise motion with style-specific durations and intensity-driven rests.
+      // At high intensity, nudge position toward upper register for a climactic feel.
+      if (curIntensity > 0.7 && posIdx < Math.floor(positions.length * 0.5)) {
+        posIdx = Math.min(positions.length - 1, posIdx + rng.nextInt(1, 2));
+      }
+      const restChance = baseRestChance * Math.max(0.4, 1.15 - curIntensity * 0.3);
       let localBeat = beat;
       let reversals = 0;
       while (localBeat < endBeat - 0.01) {
-        // Occasional 16th-note burst (2 rapid notes)
-        const dur = rng.next() < 0.25 ? 0.25 : 0.5;
-
-        // Leave rests for breathing room
-        if (rng.next() < 0.18) {
+        const dur = rng.pick(durations);
+        if (rng.next() < restChance) {
           localBeat += dur;
           continue;
         }
-
         notes.push({ ...positions[posIdx], startBeat: localBeat, durationBeats: dur });
         localBeat += dur;
-
         const step = rng.nextInt(1, 2) * phraseDir;
         posIdx += step;
-        // Bounce at the box edges
         if (posIdx >= positions.length) {
           posIdx = positions.length - 1;
           if (reversals === 0) { phraseDir = -1; reversals++; }
@@ -280,8 +401,9 @@ export function generateSolo(params: SoloParams): GeneratedSolo {
       beat = endBeat;
     }
 
-    // Inter-phrase rest
-    if (rng.next() < 0.25 && beat < totalBeats - 0.01) {
+    // Inter-phrase rest — less frequent at intensity peak, more at intro/outro.
+    const interRestChance = 0.25 * Math.max(0.5, 1.1 - curIntensity * 0.25);
+    if (rng.next() < interRestChance && beat < totalBeats - 0.01) {
       beat += rng.pick([0.25, 0.5]);
     }
 
@@ -295,10 +417,8 @@ export function generateSolo(params: SoloParams): GeneratedSolo {
     const curr = notes[i];
     const next = notes[i + 1];
     if (curr.stringIndex !== next.stringIndex) continue;
-    // Must be directly legato (no audible gap)
     const gap = next.startBeat - (curr.startBeat + curr.durationBeats);
     if (gap > 0.06) continue;
-
     const diff = next.fret - curr.fret;
     if (diff >= 1 && diff <= 2) {
       curr.technique = "hammer";
@@ -311,15 +431,14 @@ export function generateSolo(params: SoloParams): GeneratedSolo {
     }
   }
 
-  // Pass 2: bends on high strings (G / B / e) for blues & rock phrasing.
-  //   A bend targets the nearest scale note 1 or 2 semitones above.
-  const bendChance = style === "blues" ? 0.28 : style === "rock" ? 0.14 : 0.05;
+  // Pass 2: bends on high strings (G / B / e).
+  // Jazz: only bend sustained notes (≥ 0.5 beats) at a very low rate.
+  const bendChance = style === "blues" ? 0.28 : style === "rock" ? 0.14 : 0.03;
   for (const note of notes) {
-    if (note.technique) continue;        // already has a technique
-    if (note.stringIndex < 3) continue;  // only G, B, high-e
-
+    if (note.technique) continue;
+    if (note.stringIndex < 3) continue;
+    if (style === "jazz" && note.durationBeats < 0.5) continue;
     if (rng.next() < bendChance) {
-      // Find how many semitones to the next note in the scale above this one.
       let semUp: number | undefined;
       for (let delta = 1; delta <= 2; delta++) {
         if (scalePCs.has((note.pitchClass + delta) % 12)) {
@@ -330,7 +449,6 @@ export function generateSolo(params: SoloParams): GeneratedSolo {
       if (semUp !== undefined) {
         note.technique = "bend";
         note.bendSemitones = semUp;
-        // Bends ring out a bit longer than plucked notes.
         note.durationBeats = Math.max(note.durationBeats, 0.5);
       }
     }

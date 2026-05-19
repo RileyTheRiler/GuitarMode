@@ -153,4 +153,66 @@ describe("generateSolo", () => {
       }
     }
   });
+
+  it("blues and jazz solos produce meaningfully different note sequences", () => {
+    const bluesSolo = generateSolo({ chords: ["Am", "G", "F", "E"], style: "blues", seed: SEED });
+    const jazzSolo = generateSolo({ chords: ["Am", "G", "F", "E"], style: "jazz", seed: SEED });
+    const bluesMidis = bluesSolo.notes.map((n) => n.midi).join(",");
+    const jazzMidis = jazzSolo.notes.map((n) => n.midi).join(",");
+    expect(bluesMidis).not.toBe(jazzMidis);
+  });
+
+  it("long solo contains at least one rest gap >= 0.5 beats (call-and-response breathing)", () => {
+    // Use multiple seeds to increase the chance of a call_response or hold phrase firing.
+    let found = false;
+    for (let s = 0; s < 15; s++) {
+      const result = generateSolo({
+        chords: ["Am", "G", "F", "E"],
+        beatsPerChord: 8,
+        style: "blues",
+        seed: s * 17 + 3,
+      });
+      const sorted = [...result.notes].sort((a, b) => a.startBeat - b.startBeat);
+      for (let i = 0; i < sorted.length - 1; i++) {
+        const gap = sorted[i + 1].startBeat - (sorted[i].startBeat + sorted[i].durationBeats);
+        if (gap >= 0.5) { found = true; break; }
+      }
+      if (found) break;
+    }
+    expect(found).toBe(true);
+  });
+
+  it("solo note density increases toward the middle relative to the start (intensity arc)", () => {
+    // Aggregate across multiple seeds for statistical robustness.
+    let firstThirdTotal = 0;
+    let middleThirdTotal = 0;
+    const RUNS = 10;
+    for (let s = 0; s < RUNS; s++) {
+      const result = generateSolo({
+        chords: ["Am", "G", "F", "E"],
+        beatsPerChord: 8,
+        seed: s * 31 + 7,
+      });
+      const third = result.totalBeats / 3;
+      const firstCount = result.notes.filter((n) => n.startBeat < third).length;
+      const midCount = result.notes.filter(
+        (n) => n.startBeat >= third && n.startBeat < third * 2
+      ).length;
+      firstThirdTotal += firstCount;
+      middleThirdTotal += midCount;
+    }
+    // Middle third should have more notes on average than the opening third.
+    expect(middleThirdTotal).toBeGreaterThan(firstThirdTotal);
+  });
+
+  it("jazz bends only appear on notes with duration >= 0.5 beats", () => {
+    for (let s = 0; s < 15; s++) {
+      const result = generateSolo({ chords: ["Cmaj7", "Am7", "Dm7", "G7"], style: "jazz", seed: s * 11 });
+      for (const note of result.notes) {
+        if (note.technique === "bend") {
+          expect(note.durationBeats).toBeGreaterThanOrEqual(0.5);
+        }
+      }
+    }
+  });
 });
