@@ -42,6 +42,7 @@ import { SCALE_TEMPLATES } from "@/lib/music/scales";
 import { soloScalePitchClasses } from "@/lib/music/soloGuide";
 import { sheetToDetectedNotes } from "@/lib/sheet/sheetToNotes";
 import type { SheetAnalysis } from "@/lib/sheet/types";
+import { SheetAnalysisCard } from "@/components/SheetAnalysisCard";
 
 const NUM_FRETS = 22;
 const TUNING_STORAGE_KEY = "guitarmode:tuning:v1";
@@ -62,7 +63,7 @@ export default function Home() {
   const [appError, setAppError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [lastAudioBuffer, setLastAudioBuffer] = useState<AudioBuffer | null>(null);
-  const [riffContext, setRiffContext] = useState<RiffInitialContext | null>(null);
+  const [sheetAnalysis, setSheetAnalysis] = useState<SheetAnalysis | null>(null);
 
   const [highContrast, setHighContrastState] = useState(false);
   const [showDegrees, setShowDegrees] = useState(false);
@@ -117,6 +118,21 @@ export default function Home() {
   const handleRiffNotes = useCallback((pcs: Set<number>, root: number | null) => {
     setRiffPitchClasses(pcs);
     setRiffRoot(root);
+  }, []);
+
+  const riffContext = useMemo<RiffInitialContext | null>(() => {
+    if (!sheetAnalysis) return null;
+    return {
+      song: sheetAnalysis.title || "",
+      artist: sheetAnalysis.artist || "",
+      key: sheetAnalysis.key || "",
+      bpm: sheetAnalysis.bpm ?? undefined,
+      chords: sheetAnalysis.chordsText || "",
+    };
+  }, [sheetAnalysis]);
+
+  const handleClearSheet = useCallback(() => {
+    setSheetAnalysis(null);
   }, []);
 
   const [tuningId, setTuningId] = useState<string>(DEFAULT_TUNING_ID);
@@ -293,6 +309,7 @@ export default function Home() {
     setSelectedIndex(null);
     setAppError(null);
     setLastAudioBuffer(null);
+    setSheetAnalysis(null);
   }, [detector]);
 
   const handleUpload = useCallback(
@@ -371,13 +388,7 @@ export default function Home() {
         detector.reset();
         if (notes.length > 0) detector.addNotes(notes);
         setLastAudioBuffer(null);
-        setRiffContext({
-          song: analysis.title || "",
-          artist: analysis.artist || "",
-          key: analysis.key || "",
-          bpm: analysis.bpm ?? undefined,
-          chords: analysis.chordsText || "",
-        });
+        setSheetAnalysis(analysis);
       } catch (e) {
         if (!mountedRef.current) return;
         setAppError(e instanceof Error ? e.message : "Could not analyze PDF");
@@ -500,6 +511,7 @@ export default function Home() {
     setSnappedChordMatches(null);
     setSelectedDiatonicDegree(null);
     setActiveVoicing(null);
+    setSheetAnalysis(null);
   }, [detector]);
 
   const scaleSet = useMemo(
@@ -601,6 +613,16 @@ export default function Home() {
           hasNotes={detector.notes.length > 0}
         />
       </section>
+
+      {sheetAnalysis && (
+        <section className="mb-4 sm:mb-6">
+          <SheetAnalysisCard
+            analysis={sheetAnalysis}
+            noteCount={detector.notes.length}
+            onClear={handleClearSheet}
+          />
+        </section>
+      )}
 
       <section className="mb-4 sm:mb-6">
         <SessionManager
