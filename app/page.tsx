@@ -17,7 +17,7 @@ import { Metronome } from "@/components/Metronome";
 import { TimbreVisualizer } from "@/components/TimbreVisualizer";
 import { Tuner } from "@/components/Tuner";
 import { SoloGenerator } from "@/components/SoloGenerator";
-import { RiffGenerator } from "@/components/RiffGenerator";
+import { RiffGenerator, type RiffInitialContext } from "@/components/RiffGenerator";
 import { SoloGuide } from "@/components/SoloGuide";
 import { useMicStream } from "@/lib/audio/useMicStream";
 import { usePitchDetector, type DetectedNote } from "@/lib/audio/usePitchDetector";
@@ -42,6 +42,9 @@ import { CircleOfFifths } from "@/components/CircleOfFifths";
 import { EarTraining } from "@/components/EarTraining";
 import { SCALE_TEMPLATES } from "@/lib/music/scales";
 import { soloScalePitchClasses } from "@/lib/music/soloGuide";
+import { sheetToDetectedNotes } from "@/lib/sheet/sheetToNotes";
+import type { SheetAnalysis } from "@/lib/sheet/types";
+import { SheetAnalysisCard } from "@/components/SheetAnalysisCard";
 
 const NUM_FRETS = 22;
 const TUNING_STORAGE_KEY = "guitarmode:tuning:v1";
@@ -62,6 +65,7 @@ export default function Home() {
   const [appError, setAppError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [lastAudioBuffer, setLastAudioBuffer] = useState<AudioBuffer | null>(null);
+  const [sheetAnalysis, setSheetAnalysis] = useState<SheetAnalysis | null>(null);
 
   const [highContrast, setHighContrastState] = useState(false);
   const [showDegrees, setShowDegrees] = useState(false);
@@ -116,6 +120,21 @@ export default function Home() {
   const handleRiffNotes = useCallback((pcs: Set<number>, root: number | null) => {
     setRiffPitchClasses(pcs);
     setRiffRoot(root);
+  }, []);
+
+  const riffContext = useMemo<RiffInitialContext | null>(() => {
+    if (!sheetAnalysis) return null;
+    return {
+      song: sheetAnalysis.title || "",
+      artist: sheetAnalysis.artist || "",
+      key: sheetAnalysis.key || "",
+      bpm: sheetAnalysis.bpm ?? undefined,
+      chords: sheetAnalysis.chordsText || "",
+    };
+  }, [sheetAnalysis]);
+
+  const handleClearSheet = useCallback(() => {
+    setSheetAnalysis(null);
   }, []);
 
   const [tuningId, setTuningId] = useState<string>(DEFAULT_TUNING_ID);
@@ -292,6 +311,7 @@ export default function Home() {
     setSelectedIndex(null);
     setAppError(null);
     setLastAudioBuffer(null);
+    setSheetAnalysis(null);
   }, [detector]);
 
   const handleUpload = useCallback(
@@ -334,6 +354,46 @@ export default function Home() {
       } catch (e) {
         if (!mountedRef.current) return;
         setAppError(e instanceof Error ? e.message : "Could not analyze file");
+      } finally {
+        if (mountedRef.current) {
+          setAnalyzing(false);
+          setAnalyzeProgress(null);
+          setAnalyzeLabel(null);
+        }
+      }
+    },
+    [detector]
+  );
+
+  const handleUploadPdf = useCallback(
+    async (file: File) => {
+      setAppError(null);
+      if (detector.active) detector.stop();
+      setAnalyzing(true);
+      setAnalyzeProgress(null);
+      setAnalyzeLabel("Reading sheet music…");
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        const res = await fetch("/api/analyze-sheet", { method: "POST", body: form });
+        if (!res.ok) {
+          let msg = `Request failed (${res.status})`;
+          try {
+            const errBody = (await res.json()) as { error?: string };
+            if (errBody?.error) msg = errBody.error;
+          } catch {}
+          throw new Error(msg);
+        }
+        const analysis = (await res.json()) as SheetAnalysis;
+        if (!mountedRef.current) return;
+        const notes = sheetToDetectedNotes(analysis, { a4Hz: detector.config.a4Hz });
+        detector.reset();
+        if (notes.length > 0) detector.addNotes(notes);
+        setLastAudioBuffer(null);
+        setSheetAnalysis(analysis);
+      } catch (e) {
+        if (!mountedRef.current) return;
+        setAppError(e instanceof Error ? e.message : "Could not analyze PDF");
       } finally {
         if (mountedRef.current) {
           setAnalyzing(false);
@@ -453,6 +513,7 @@ export default function Home() {
     setSnappedChordMatches(null);
     setSelectedDiatonicDegree(null);
     setActiveVoicing(null);
+    setSheetAnalysis(null);
   }, [detector]);
 
   const scaleSet = useMemo(
@@ -541,6 +602,7 @@ export default function Home() {
           onToggleMic={handleToggleMic}
           onReset={handleReset}
           onUpload={handleUpload}
+          onUploadPdf={handleUploadPdf}
           onStartRecording={handleStartRecording}
           onStopRecording={handleStopRecording}
           onExportMidi={handleExportMidi}
@@ -553,6 +615,16 @@ export default function Home() {
           hasNotes={detector.notes.length > 0}
         />
       </section>
+
+      {sheetAnalysis && (
+        <section className="mb-4 sm:mb-6">
+          <SheetAnalysisCard
+            analysis={sheetAnalysis}
+            noteCount={detector.notes.length}
+            onClear={handleClearSheet}
+          />
+        </section>
+      )}
 
       <section className="mb-4 sm:mb-6">
         <SessionManager
@@ -691,6 +763,7 @@ export default function Home() {
         <RiffGenerator
           onRiffNotes={handleRiffNotes}
           onRiffNoteActive={setRiffPlayingPc}
+          initialContext={riffContext}
         />
       </section>
 
