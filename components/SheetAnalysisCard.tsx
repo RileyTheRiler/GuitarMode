@@ -71,7 +71,7 @@ export function SheetAnalysisCard({ analysis, noteCount, onClear }: Props) {
       )}
 
       <p className="mt-3 text-[11px] text-zinc-500">
-        Fretboard and Scale Suggestions reflect these notes. The AI Riff Generator below is pre-filled with this context — edit any field there before generating a solo.
+        Fretboard and Scale Suggestions reflect these notes. The Progression Editor and AI Riff Generator below are pre-filled with this context — edit any field there before practicing or generating a solo.
       </p>
     </div>
   );

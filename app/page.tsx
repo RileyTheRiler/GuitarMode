@@ -41,6 +41,7 @@ import { DiatonicChords } from "@/components/DiatonicChords";
 import { SCALE_TEMPLATES } from "@/lib/music/scales";
 import { soloScalePitchClasses } from "@/lib/music/soloGuide";
 import { sheetToDetectedNotes } from "@/lib/sheet/sheetToNotes";
+import { sheetToProgression } from "@/lib/sheet/sheetToProgression";
 import type { SheetAnalysis } from "@/lib/sheet/types";
 import { SheetAnalysisCard } from "@/components/SheetAnalysisCard";
 
@@ -389,6 +390,8 @@ export default function Home() {
         if (notes.length > 0) detector.addNotes(notes);
         setLastAudioBuffer(null);
         setSheetAnalysis(analysis);
+        const prog = sheetToProgression(analysis);
+        if (prog.length > 0) setProgression(prog);
       } catch (e) {
         if (!mountedRef.current) return;
         setAppError(e instanceof Error ? e.message : "Could not analyze PDF");
@@ -400,7 +403,7 @@ export default function Home() {
         }
       }
     },
-    [detector]
+    [detector, setProgression]
   );
 
   const handleStartRecording = useCallback(async () => {
