@@ -45,6 +45,10 @@ import { soloScalePitchClasses } from "@/lib/music/soloGuide";
 import { sheetToDetectedNotes } from "@/lib/sheet/sheetToNotes";
 import type { SheetAnalysis } from "@/lib/sheet/types";
 import { SheetAnalysisCard } from "@/components/SheetAnalysisCard";
+import { ScalePatternExplorer } from "@/components/ScalePatternExplorer";
+import { KeyExplorer } from "@/components/KeyExplorer";
+import { IntervalWorkshop } from "@/components/IntervalWorkshop";
+import { LearningRoadmap } from "@/components/LearningRoadmap";
 
 const NUM_FRETS = 22;
 const TUNING_STORAGE_KEY = "guitarmode:tuning:v1";
@@ -57,6 +61,8 @@ const DEGREE_NAMES = ["1","♭2","2","♭3","3","4","♯4","5","♭6","6","♭7"
 export default function Home() {
   const mic = useMicStream();
   const detector = usePitchDetector();
+
+  const [appMode, setAppMode] = useState<"detect" | "learn">("detect");
 
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeProgress, setAnalyzeProgress] = useState<number | null>(null);
@@ -596,6 +602,25 @@ export default function Home() {
         </div>
       </header>
 
+      {/* App mode tabs */}
+      <div className="mb-4 sm:mb-6 flex rounded-lg border border-zinc-800 bg-zinc-950 p-0.5">
+        {(["detect", "learn"] as const).map((tab) => (
+          <button
+            key={tab}
+            type="button"
+            onClick={() => setAppMode(tab)}
+            className={`flex-1 rounded-md px-4 py-2 text-sm font-medium capitalize transition ${
+              appMode === tab
+                ? "bg-zinc-800 text-zinc-100"
+                : "text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            {tab === "detect" ? "Detect" : "Learn"}
+          </button>
+        ))}
+      </div>
+
+      {appMode === "detect" && (<>
       <section className="mb-4 rounded-xl border border-zinc-800/80 bg-zinc-900/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] p-3 sm:p-4">
         <MicControls
           micOn={detector.active}
@@ -862,6 +887,16 @@ export default function Home() {
         <kbd className="rounded bg-zinc-800 px-1">R</kbd> record &middot;{" "}
         <kbd className="rounded bg-zinc-800 px-1">Esc</kbd> reset
       </footer>
+      </>)}
+
+      {appMode === "learn" && (
+        <div className="space-y-6">
+          <LearningRoadmap />
+          <ScalePatternExplorer />
+          <KeyExplorer />
+          <IntervalWorkshop />
+        </div>
+      )}
     </main>
   );
 }
