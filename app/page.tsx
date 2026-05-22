@@ -49,6 +49,7 @@ import { ScalePatternExplorer } from "@/components/ScalePatternExplorer";
 import { KeyExplorer } from "@/components/KeyExplorer";
 import { IntervalWorkshop } from "@/components/IntervalWorkshop";
 import { LearningRoadmap } from "@/components/LearningRoadmap";
+import { TabPlayer } from "@/components/TabPlayer";
 
 const NUM_FRETS = 22;
 const TUNING_STORAGE_KEY = "guitarmode:tuning:v1";
@@ -892,6 +893,7 @@ export default function Home() {
       {appMode === "learn" && (
         <div className="space-y-6">
           <LearningRoadmap />
+          <TabPlayer />
           <ScalePatternExplorer />
           <KeyExplorer />
           <IntervalWorkshop />

@@ -28,6 +28,8 @@ type Props = {
   chordFifthPitchClass?: number | null;
   boxCenterFret?: number | null;
   boxWindow?: number;
+  /** Highlight these exact string+fret positions with the live pulsing animation. */
+  livePositions?: { stringIndex: number; fret: number }[];
   onFretClick?: (stringIndex: number, fret: number, midi: number) => void;
 };
 
@@ -82,6 +84,7 @@ export function Fretboard({
   chordFifthPitchClass,
   boxCenterFret,
   boxWindow = 5,
+  livePositions,
   onFretClick,
 }: Props) {
   const chordActive = !!chordPitchClasses && chordPitchClasses.size > 0;
@@ -158,6 +161,13 @@ export function Fretboard({
     [voicingPositions]
   );
 
+  const livePositionSet = useMemo(
+    () => livePositions?.length
+      ? new Set(livePositions.map((p) => `${p.stringIndex}:${p.fret}`))
+      : null,
+    [livePositions]
+  );
+
   const circles: React.ReactNode[] = [];
   const hitTargets: React.ReactNode[] = [];
   for (let s = 0; s < numStrings; s++) {
@@ -169,7 +179,9 @@ export function Fretboard({
       const isPlayed = playedPitchClasses.has(pos.pitchClass);
       const isInScale = scalePitchClasses?.has(pos.pitchClass) ?? false;
       const isRoot = rootPitchClass != null && pos.pitchClass === rootPitchClass;
-      const isLive = highlightFretPosition
+      const isLive = livePositionSet
+        ? livePositionSet.has(`${s}:${f}`)
+        : highlightFretPosition
         ? highlightFretPosition.stringIndex === s && highlightFretPosition.fret === f
         : currentPitchClass != null && pos.pitchClass === currentPitchClass;
       const isChordTone = chordActive && (chordPitchClasses?.has(pos.pitchClass) ?? false);
