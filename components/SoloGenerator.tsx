@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Fretboard } from "./Fretboard";
+import { PhraseLibrary } from "./PhraseLibrary";
 import { generateSolo, type GeneratedSolo, type SoloNote } from "@/lib/music/soloGenerator";
 import { createSoloPlayer, type SoloPlayer } from "@/lib/audio/soloPlayer";
 import { NOTE_NAMES, colorForPitchClass } from "@/lib/music/notes";
 import { parseChord } from "@/lib/music/chords";
 import type { NoteTechnique } from "@/lib/music/soloGenerator";
+import type { GuitarLick } from "@/lib/music/phraseLibrary";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -268,6 +270,8 @@ export function SoloGenerator() {
   const [currentNote, setCurrentNote] = useState<SoloNote | null>(null);
   const [playheadBeat, setPlayheadBeat] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showLickLibrary, setShowLickLibrary] = useState(false);
+  const [activeLick, setActiveLick] = useState<GuitarLick | null>(null);
 
   const playerRef = useRef<SoloPlayer | null>(null);
   const loopRef = useRef(false);
@@ -341,6 +345,16 @@ export function SoloGenerator() {
 
   // ── Generate ──
 
+  const handleLickLoad = useCallback((s: GeneratedSolo, lick: GuitarLick) => {
+    playerRef.current?.stop();
+    stopPlayheadRaf();
+    setPlaying(false);
+    setCurrentNote(null);
+    setSolo(s);
+    setActiveLick(lick);
+    setShowLickLibrary(false);
+  }, []);
+
   const handleGenerate = useCallback(() => {
     const chords = parseChordList(chordsInput);
     if (chords.length === 0) {
@@ -352,6 +366,7 @@ export function SoloGenerator() {
       return;
     }
     setError(null);
+    setActiveLick(null);
 
     playerRef.current?.stop();
     stopPlayheadRaf();
@@ -423,6 +438,14 @@ export function SoloGenerator() {
               {" · "}
               {solo.notes.length} notes · frets {solo.centerFret}–
               {solo.centerFret + 7}
+            </p>
+          )}
+          {activeLick && (
+            <p className="mt-0.5 text-xs text-teal-500">
+              Lick:{" "}
+              <span className="text-teal-300">{activeLick.name}</span>
+              {" — "}
+              {activeLick.description}
             </p>
           )}
         </div>
@@ -555,12 +578,31 @@ export function SoloGenerator() {
         >
           {showTab ? "Hide tab" : "Show tab"}
         </button>
+        <button
+          onClick={() => setShowLickLibrary((v) => !v)}
+          className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+            showLickLibrary
+              ? "border-teal-600 bg-teal-900/60 text-teal-300 hover:bg-teal-900"
+              : "border-zinc-700 bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+          }`}
+        >
+          {showLickLibrary ? "Hide lick library" : "Lick library"}
+        </button>
       </div>
 
       {error && (
         <p className="mb-3 rounded-md border border-red-800 bg-red-950/50 px-3 py-2 text-xs text-red-400">
           {error}
         </p>
+      )}
+
+      {showLickLibrary && (
+        <div className="mb-4">
+          <PhraseLibrary
+            onLickLoad={handleLickLoad}
+            defaultScaleRoot={solo?.scaleRoot ?? 9}
+          />
+        </div>
       )}
 
       {/* ── Note readout ── */}
