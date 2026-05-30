@@ -1,5 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextResponse } from "next/server";
+import { clientIp, createRateLimiter } from "@/lib/server/rateLimit";
+import { sanitize, sanitizeMultiline } from "@/lib/server/sanitize";
 
 export type SoloCoachMessage = { role: "user" | "assistant"; content: string };
 
@@ -19,33 +21,8 @@ export type SoloCoachResponse = { reply: string };
 
 const client = new Anthropic();
 
-// In-memory rate limiter: max 10 requests per minute per IP.
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-const RATE_LIMIT_MAX = 10;
-const RATE_LIMIT_WINDOW_MS = 60_000;
-
-function checkRateLimit(ip: string): boolean {
-  const now = Date.now();
-  const entry = rateLimitMap.get(ip);
-  if (!entry || now >= entry.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-    return true;
-  }
-  if (entry.count >= RATE_LIMIT_MAX) return false;
-  entry.count++;
-  return true;
-}
-
-// Strip control characters (including newlines from context fields) and truncate.
-function sanitize(value: string, maxLen: number): string {
-  return value.replace(/[\x00-\x1F\x7F]/g, " ").trim().slice(0, maxLen);
-}
-
-// Message content keeps newlines (tabs, multi-line questions) but strips other
-// control characters, and is capped in length.
-function sanitizeMessageContent(value: string, maxLen: number): string {
-  return value.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ").trim().slice(0, maxLen);
-}
+// Max 10 requests per minute per IP, scoped to this route.
+const checkRateLimit = createRateLimiter(10, 60_000);
 
 const MAX_MESSAGES = 20;
 const MAX_MSG_LEN = 4000;
@@ -72,10 +49,7 @@ Coaching style:
 
 export async function POST(request: Request) {
   // Rate limiting
-  const ip =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    request.headers.get("x-real-ip") ??
-    "unknown";
+  const ip = clientIp(request);
   if (!checkRateLimit(ip)) {
     return NextResponse.json({ error: "Too many requests. Please wait a moment." }, { status: 429 });
   }
@@ -100,7 +74,7 @@ export async function POST(request: Request) {
         (m.role === "user" || m.role === "assistant") &&
         typeof m.content === "string"
     )
-    .map((m) => ({ role: m.role, content: sanitizeMessageContent(m.content, MAX_MSG_LEN) }))
+    .map((m) => ({ role: m.role, content: sanitizeMultiline(m.content, MAX_MSG_LEN) }))
     .filter((m) => m.content.length > 0);
 
   if (safeMessages.length === 0) {
@@ -159,6 +133,10 @@ The above describes what the student has been playing. Use it to personalize you
   }
 
   const reply = message.content[0]?.type === "text" ? message.content[0].text : "";
+
+  if (reply.trim() === "") {
+    return NextResponse.json({ error: "Empty response. Try again." }, { status: 502 });
+  }
 
   return NextResponse.json({ reply } satisfies SoloCoachResponse);
 }

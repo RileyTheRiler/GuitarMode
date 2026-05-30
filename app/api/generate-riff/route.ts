@@ -1,5 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextResponse } from "next/server";
+import { clientIp, createRateLimiter } from "@/lib/server/rateLimit";
+import { sanitize } from "@/lib/server/sanitize";
 
 export type GenerateRiffRequest = {
   song: string;
@@ -21,29 +23,10 @@ export type GenerateRiffResponse = {
 
 const client = new Anthropic();
 
-// In-memory rate limiter: max 10 requests per minute per IP.
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-const RATE_LIMIT_MAX = 10;
-const RATE_LIMIT_WINDOW_MS = 60_000;
-
-function checkRateLimit(ip: string): boolean {
-  const now = Date.now();
-  const entry = rateLimitMap.get(ip);
-  if (!entry || now >= entry.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-    return true;
-  }
-  if (entry.count >= RATE_LIMIT_MAX) return false;
-  entry.count++;
-  return true;
-}
+// Max 10 requests per minute per IP, scoped to this route.
+const checkRateLimit = createRateLimiter(10, 60_000);
 
 const VALID_SECTIONS = new Set(["verse", "chorus", "solo", "bridge"]);
-
-// Strip control characters (including newlines) and truncate to prevent prompt injection.
-function sanitize(value: string, maxLen: number): string {
-  return value.replace(/[\x00-\x1F\x7F]/g, " ").trim().slice(0, maxLen);
-}
 
 const SYSTEM_PROMPT = `You are an expert guitarist and music theory teacher helping a cover band lead guitarist write original riffs and solos. You understand rock, blues, metal, pop, and country guitar styles deeply.
 
@@ -70,10 +53,7 @@ Use realistic, playable fret numbers. Include bends (b), slides (/\\), hammer-on
 
 export async function POST(request: Request) {
   // Rate limiting
-  const ip =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    request.headers.get("x-real-ip") ??
-    "unknown";
+  const ip = clientIp(request);
   if (!checkRateLimit(ip)) {
     return NextResponse.json({ error: "Too many requests. Please wait a moment." }, { status: 429 });
   }

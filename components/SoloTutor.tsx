@@ -67,19 +67,27 @@ function saveToDisk(messages: SoloCoachMessage[]) {
 // into a monospaced block and keeping everything else as line-broken text.
 function AssistantContent({ content }: { content: string }) {
   const segments = content.split("```");
+  // An odd number of fences leaves an unterminated trailing segment — render it
+  // as plain text rather than swallowing the rest of the reply into a code block.
+  const trailingUnterminated = segments.length % 2 === 0;
   return (
     <>
       {segments.map((seg, i) => {
-        const fenced = i % 2 === 1;
+        const fenced =
+          i % 2 === 1 && !(trailingUnterminated && i === segments.length - 1);
         if (fenced) {
-          // Drop an optional language hint on the first line of the fence.
-          const body = seg.replace(/^[^\n]*\n/, (m) => (m.trim().includes(" ") ? "" : m));
+          // Drop an optional language hint (e.g. ```tab / ```text) that sits as a
+          // bare word on the first line, but never touch real tab content.
+          const lines = seg.split("\n");
+          if (lines.length > 1 && /^[a-zA-Z]+$/.test(lines[0].trim())) lines.shift();
+          const body = lines.join("\n").replace(/^\n+|\n+$/g, "");
+          if (body === "") return null;
           return (
             <pre
               key={i}
               className="my-2 overflow-x-auto rounded-lg bg-zinc-950 p-3 text-xs leading-relaxed text-green-400 font-mono"
             >
-              {body.replace(/\n$/, "")}
+              {body}
             </pre>
           );
         }
