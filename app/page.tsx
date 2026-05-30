@@ -50,6 +50,7 @@ import { KeyExplorer } from "@/components/KeyExplorer";
 import { IntervalWorkshop } from "@/components/IntervalWorkshop";
 import { LearningRoadmap } from "@/components/LearningRoadmap";
 import { TabPlayer } from "@/components/TabPlayer";
+import { SoloTutor } from "@/components/SoloTutor";
 
 const NUM_FRETS = 22;
 const TUNING_STORAGE_KEY = "guitarmode:tuning:v1";
@@ -246,6 +247,13 @@ export default function Home() {
   );
   const playedPitchClasses = useMemo(() => profilePitchClassSet(profile), [profile]);
   const matches = useMemo(() => detectScales(profile, 5), [profile]);
+
+  // Most recent played note names (consecutive repeats collapsed) — fed to the
+  // Solo Tutor so its coaching is personalized to what was actually played.
+  const recentPlayedNotes = useMemo(() => {
+    const names = detector.notes.map((n) => n.noteName);
+    return names.filter((n, i) => i === 0 || n !== names[i - 1]).slice(-48);
+  }, [detector.notes]);
   const chordMatches = useMemo(() => detectChords(profile, 4), [profile]);
 
   useEffect(() => {
@@ -897,6 +905,11 @@ export default function Home() {
           <ScalePatternExplorer />
           <KeyExplorer />
           <IntervalWorkshop />
+          <SoloTutor
+            detectedKey={selected?.rootName}
+            detectedScale={selected?.templateName}
+            playedNotes={recentPlayedNotes}
+          />
         </div>
       )}
     </main>

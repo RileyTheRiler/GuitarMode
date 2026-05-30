@@ -1,5 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextResponse } from "next/server";
+import { clientIp, createRateLimiter } from "@/lib/server/rateLimit";
+import { sanitize } from "@/lib/server/sanitize";
 
 export type SongTabRequest = {
   query: string; // song name + optional artist, e.g. "Smoke on the Water, Deep Purple"
@@ -14,25 +16,8 @@ export type SongTabResponse = {
 
 const client = new Anthropic();
 
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-const RATE_LIMIT_MAX = 10;
-const RATE_LIMIT_WINDOW_MS = 60_000;
-
-function checkRateLimit(ip: string): boolean {
-  const now = Date.now();
-  const entry = rateLimitMap.get(ip);
-  if (!entry || now >= entry.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-    return true;
-  }
-  if (entry.count >= RATE_LIMIT_MAX) return false;
-  entry.count++;
-  return true;
-}
-
-function sanitize(s: string, max: number): string {
-  return s.replace(/[\x00-\x1F\x7F]/g, " ").trim().slice(0, max);
-}
+// Max 10 requests per minute per IP, scoped to this route.
+const checkRateLimit = createRateLimiter(10, 60_000);
 
 const SYSTEM_PROMPT = `You are a guitar teacher. When given a song name (and optional artist), respond with the main recognizable guitar riff or melody as ASCII tablature.
 
@@ -63,10 +48,7 @@ E|---3---3---3---|
 If you don't know the song well enough to provide accurate tab, write a simple melodic riff in an appropriate key for the genre instead, and mention that in the note field.`;
 
 export async function POST(request: Request) {
-  const ip =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    request.headers.get("x-real-ip") ??
-    "unknown";
+  const ip = clientIp(request);
   if (!checkRateLimit(ip)) {
     return NextResponse.json(
       { error: "Too many requests. Please wait a moment." },
