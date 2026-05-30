@@ -113,30 +113,50 @@ The above describes what the student has been playing. Use it to personalize you
       : m
   );
 
-  let message;
-  try {
-    message = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1024,
-      system: [
-        {
-          type: "text",
-          text: SYSTEM_PROMPT,
-          cache_control: { type: "ephemeral" },
-        },
-      ],
-      messages: apiMessages,
-    });
-  } catch (e) {
-    console.error("solo-coach: Claude API error", e);
-    return NextResponse.json({ error: "AI service unavailable. Try again shortly." }, { status: 502 });
-  }
+  // Stream the reply so the client can render tokens as they arrive. Validation
+  // and rate-limit errors above still return JSON status codes; once we start
+  // streaming, the body is plain text and any mid-stream failure surfaces as a
+  // body error the client treats as a failed turn.
+  const stream = client.messages.stream({
+    model: "claude-sonnet-4-6",
+    max_tokens: 1024,
+    system: [
+      {
+        type: "text",
+        text: SYSTEM_PROMPT,
+        cache_control: { type: "ephemeral" },
+      },
+    ],
+    messages: apiMessages,
+  });
 
-  const reply = message.content[0]?.type === "text" ? message.content[0].text : "";
+  const encoder = new TextEncoder();
+  const readable = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for await (const event of stream) {
+          if (
+            event.type === "content_block_delta" &&
+            event.delta.type === "text_delta"
+          ) {
+            controller.enqueue(encoder.encode(event.delta.text));
+          }
+        }
+        controller.close();
+      } catch (e) {
+        console.error("solo-coach: Claude stream error", e);
+        controller.error(e);
+      }
+    },
+    cancel() {
+      stream.abort();
+    },
+  });
 
-  if (reply.trim() === "") {
-    return NextResponse.json({ error: "Empty response. Try again." }, { status: 502 });
-  }
-
-  return NextResponse.json({ reply } satisfies SoloCoachResponse);
+  return new Response(readable, {
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+  });
 }

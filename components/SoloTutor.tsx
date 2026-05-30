@@ -1,14 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import type {
-  SoloCoachMessage,
-  SoloCoachRequest,
-  SoloCoachResponse,
-} from "@/app/api/solo-coach/route";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { SoloCoachMessage, SoloCoachRequest } from "@/app/api/solo-coach/route";
+import { Fretboard } from "@/components/Fretboard";
+import { parseTab, columnsToTimes, detectColumnsPerBeat } from "@/lib/music/tabParser";
+import { STANDARD_TUNING } from "@/lib/guitar/fretboard";
+import { midiToPitchClass } from "@/lib/music/notes";
+import { getToneContext, schedulePluck, type ScheduledNote } from "@/lib/audio/tonePlayer";
 
 const STORAGE_KEY = "guitarmode:solo-tutor:v1";
 const MAX_STORED = 20;
+const LICK_BPM = 100;
 
 type Topic = { label: string; seed: string };
 
@@ -63,6 +65,56 @@ function saveToDisk(messages: SoloCoachMessage[]) {
   } catch {}
 }
 
+// Pull the fenced segments out of a reply (odd indices of a ``` split).
+function fencedBlocks(content: string): string[] {
+  const segs = content.split("```");
+  const blocks: string[] = [];
+  // Skip a trailing unterminated fence (even number of segments).
+  const last = segs.length % 2 === 0 ? segs.length - 1 : segs.length;
+  for (let i = 1; i < last; i += 2) blocks.push(segs[i]);
+  return blocks;
+}
+
+type Lick = {
+  events: { stringIndex: number; fret: number }[][];
+  pitchClasses: Set<number>;
+  rootPitchClass: number | null;
+  times: number[]; // seconds, one per event
+};
+
+// Find the most substantial ASCII tab in an assistant reply and turn it into a
+// playable/visualizable lick. Returns null when no tab is present.
+function extractLick(content: string): Lick | null {
+  let best: ReturnType<typeof parseTab> | null = null;
+  for (const block of fencedBlocks(content)) {
+    let parsed;
+    try {
+      parsed = parseTab(block);
+    } catch {
+      continue;
+    }
+    if (parsed.events.length > 0 && (!best || parsed.events.length > best.events.length)) {
+      best = parsed;
+    }
+  }
+  if (!best || best.events.length === 0) return null;
+
+  const pitchClasses = new Set<number>();
+  let rootPitchClass: number | null = null;
+  const events = best.events.map((ev) =>
+    ev.notes.map((n) => {
+      const midi = STANDARD_TUNING[n.stringIndex] + n.fret;
+      const pc = midiToPitchClass(midi);
+      pitchClasses.add(pc);
+      if (rootPitchClass === null) rootPitchClass = pc;
+      return { stringIndex: n.stringIndex, fret: n.fret };
+    })
+  );
+  const cpb = detectColumnsPerBeat(best.events);
+  const times = columnsToTimes(best.events, LICK_BPM, cpb);
+  return { events, pitchClasses, rootPitchClass, times };
+}
+
 // Render an assistant reply, putting triple-backtick fenced sections (ASCII tab)
 // into a monospaced block and keeping everything else as line-broken text.
 function AssistantContent({ content }: { content: string }) {
@@ -112,6 +164,7 @@ export function SoloTutor({ detectedKey, detectedScale, playedNotes }: Props) {
   const [messages, setMessages] = useState<SoloCoachMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTopic, setActiveTopic] = useState<string | null>(null);
 
@@ -121,9 +174,11 @@ export function SoloTutor({ detectedKey, detectedScale, playedNotes }: Props) {
     setMessages(loadSaved());
   }, []);
 
+  // Persist only completed turns — skip the noisy partial states while a reply
+  // is still streaming in.
   useEffect(() => {
-    if (messages.length > 0) saveToDisk(messages);
-  }, [messages]);
+    if (!loading && messages.length > 0) saveToDisk(messages);
+  }, [messages, loading]);
 
   // Keep the transcript scrolled to the latest turn.
   useEffect(() => {
@@ -135,10 +190,12 @@ export function SoloTutor({ detectedKey, detectedScale, playedNotes }: Props) {
     async (next: SoloCoachMessage[], topicLabel?: string) => {
       setMessages(next);
       setLoading(true);
+      setStreaming(false);
       setError(null);
 
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 30000);
+      let placeholderAdded = false;
 
       try {
         const body: SoloCoachRequest = {
@@ -156,13 +213,51 @@ export function SoloTutor({ detectedKey, detectedScale, playedNotes }: Props) {
           body: JSON.stringify(body),
           signal: controller.signal,
         });
+        // Headers are in — stop the time-to-first-byte guard so a long reply
+        // isn't cut off mid-stream.
+        clearTimeout(timeout);
         if (!res.ok) {
           const err = await res.json().catch(() => ({ error: "Request failed" }));
           throw new Error(err.error ?? "Request failed");
         }
-        const data: SoloCoachResponse = await res.json();
-        setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
+
+        const reader = res.body?.getReader();
+        if (!reader) {
+          // Fallback for non-streaming responses.
+          const data = await res.json().catch(() => null);
+          const reply = data && typeof data.reply === "string" ? data.reply : "";
+          if (reply.trim() === "") throw new Error("Empty response. Try again.");
+          setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+          return;
+        }
+
+        const decoder = new TextDecoder();
+        let acc = "";
+        setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+        placeholderAdded = true;
+        setStreaming(true);
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          acc += decoder.decode(value, { stream: true });
+          setMessages((prev) => {
+            const copy = prev.slice();
+            copy[copy.length - 1] = { role: "assistant", content: acc };
+            return copy;
+          });
+        }
+        acc += decoder.decode();
+        if (acc.trim() === "") throw new Error("Empty response. Try again.");
       } catch (e) {
+        if (placeholderAdded) {
+          // Drop the streamed assistant bubble (empty or partial) so the
+          // transcript ends on the user turn and retry/regenerate start clean.
+          setMessages((prev) =>
+            prev.length > 0 && prev[prev.length - 1].role === "assistant"
+              ? prev.slice(0, -1)
+              : prev
+          );
+        }
         if ((e as Error).name === "AbortError") {
           setError("Request timed out. Try again.");
         } else {
@@ -171,6 +266,7 @@ export function SoloTutor({ detectedKey, detectedScale, playedNotes }: Props) {
       } finally {
         clearTimeout(timeout);
         setLoading(false);
+        setStreaming(false);
       }
     },
     [detectedKey, detectedScale, playedNotes, activeTopic]
@@ -201,6 +297,15 @@ export function SoloTutor({ detectedKey, detectedScale, playedNotes }: Props) {
     }
   }, [loading, messages, sendMessages]);
 
+  // Drop the trailing assistant turn(s) and ask the coach again.
+  const handleRegenerate = useCallback(() => {
+    if (loading || messages.length === 0) return;
+    let end = messages.length;
+    while (end > 0 && messages[end - 1].role === "assistant") end--;
+    if (end === 0) return;
+    void sendMessages(messages.slice(0, end));
+  }, [loading, messages, sendMessages]);
+
   const handleClear = useCallback(() => {
     setMessages([]);
     setActiveTopic(null);
@@ -214,6 +319,67 @@ export function SoloTutor({ detectedKey, detectedScale, playedNotes }: Props) {
     detectedKey || detectedScale
       ? `Coaching in ${detectedKey ?? ""} ${detectedScale ?? ""}`.trim()
       : null;
+
+  const lastIsAssistant =
+    messages.length > 0 && messages[messages.length - 1].role === "assistant";
+
+  // The lick to put on the fretboard is parsed from the latest assistant reply.
+  const lastAssistant = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "assistant") return messages[i].content;
+    }
+    return null;
+  }, [messages]);
+
+  const lick = useMemo(
+    () => (lastAssistant ? extractLick(lastAssistant) : null),
+    [lastAssistant]
+  );
+
+  // --- Lick playback (audio + fretboard highlight) ---
+  const [playing, setPlaying] = useState(false);
+  const [activePositions, setActivePositions] = useState<
+    { stringIndex: number; fret: number }[]
+  >([]);
+  const playTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const scheduledRef = useRef<ScheduledNote[]>([]);
+
+  const stopLick = useCallback(() => {
+    playTimersRef.current.forEach(clearTimeout);
+    playTimersRef.current = [];
+    scheduledRef.current.forEach((s) => s.cancel());
+    scheduledRef.current = [];
+    setPlaying(false);
+    setActivePositions([]);
+  }, []);
+
+  const playLick = useCallback(() => {
+    if (!lick) return;
+    if (playing) {
+      stopLick();
+      return;
+    }
+    const ctx = getToneContext();
+    const base = ctx.currentTime + 0.1;
+    setPlaying(true);
+    lick.events.forEach((positions, i) => {
+      const tSec = lick.times[i] ?? 0;
+      for (const p of positions) {
+        const midi = STANDARD_TUNING[p.stringIndex] + p.fret;
+        scheduledRef.current.push(schedulePluck(midi, base + tSec));
+      }
+      const vt = setTimeout(() => setActivePositions(positions), tSec * 1000);
+      playTimersRef.current.push(vt);
+    });
+    const endMs = (lick.times[lick.times.length - 1] ?? 0) * 1000 + 600;
+    playTimersRef.current.push(setTimeout(stopLick, endMs));
+  }, [lick, playing, stopLick]);
+
+  // Stop playback when the lick changes or the component unmounts.
+  useEffect(() => {
+    stopLick();
+    return () => stopLick();
+  }, [lick, stopLick]);
 
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:p-4">
@@ -282,13 +448,50 @@ export function SoloTutor({ detectedKey, detectedScale, playedNotes }: Props) {
               </div>
             </div>
           ))}
-          {loading && (
+          {loading && !streaming && (
             <div className="flex justify-start">
               <div className="rounded-lg bg-zinc-800 px-3 py-2 text-sm text-zinc-400">
                 Coaching…
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Lick on the fretboard, parsed from the latest reply */}
+      {lick && (
+        <div className="mb-3 rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+              Lick on the fretboard
+            </span>
+            <button
+              type="button"
+              onClick={playLick}
+              className={`shrink-0 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                playing
+                  ? "bg-amber-500 text-zinc-900 hover:bg-amber-400"
+                  : "bg-zinc-700 text-zinc-100 hover:bg-zinc-600"
+              }`}
+            >
+              {playing ? "■ Stop" : "▶ Play lick"}
+            </button>
+          </div>
+          <Fretboard
+            numFrets={17}
+            tuning={STANDARD_TUNING}
+            playedPitchClasses={lick.pitchClasses}
+            rootPitchClass={lick.rootPitchClass}
+            livePositions={activePositions}
+            onFretClick={(_s, _f, midi) => {
+              getToneContext();
+              schedulePluck(midi, getToneContext().currentTime + 0.01);
+            }}
+          />
+          <p className="mt-2 text-xs text-zinc-500">
+            Filled circles are the lick&rsquo;s notes. Press play to hear it and watch the
+            positions light up.
+          </p>
         </div>
       )}
 
@@ -302,6 +505,19 @@ export function SoloTutor({ detectedKey, detectedScale, playedNotes }: Props) {
             className="shrink-0 rounded-md bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-300 transition hover:bg-zinc-700 disabled:opacity-50"
           >
             Try again
+          </button>
+        </div>
+      )}
+
+      {/* Regenerate the last reply */}
+      {lastIsAssistant && !loading && (
+        <div className="mb-3">
+          <button
+            type="button"
+            onClick={handleRegenerate}
+            className="rounded-md bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-300 transition hover:bg-zinc-700"
+          >
+            ↻ Regenerate reply
           </button>
         </div>
       )}

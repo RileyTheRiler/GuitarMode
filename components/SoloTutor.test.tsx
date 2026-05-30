@@ -3,18 +3,49 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { SoloTutor } from "./SoloTutor";
 
+vi.mock("@/lib/audio/tonePlayer", () => ({
+  getToneContext: vi.fn(() => ({ currentTime: 0 })),
+  schedulePluck: vi.fn(() => ({ stopAt: 0, cancel: vi.fn() })),
+  playPluck: vi.fn(),
+}));
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   localStorage.clear();
 });
 
+// Non-streaming response (no body) — exercises the JSON fallback path.
 function mockFetchReply(reply: string) {
   global.fetch = vi.fn().mockResolvedValue({
     ok: true,
     json: () => Promise.resolve({ reply }),
   } as Response);
 }
+
+// Streaming response — body is a ReadableStream of UTF-8 chunks.
+function mockFetchStream(chunks: string[]) {
+  const enc = new TextEncoder();
+  global.fetch = vi.fn().mockResolvedValue({
+    ok: true,
+    body: new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const c of chunks) controller.enqueue(enc.encode(c));
+        controller.close();
+      },
+    }),
+  } as unknown as Response);
+}
+
+const SIX_LINE_TAB =
+  "```\n" +
+  "e|-------------------|\n" +
+  "B|-------------------|\n" +
+  "G|-------------------|\n" +
+  "D|-------------------|\n" +
+  "A|-3-5-7-------------|\n" +
+  "E|-------------------|\n" +
+  "```";
 
 function mockFetchError(message = "AI service unavailable. Try again shortly.") {
   global.fetch = vi.fn().mockResolvedValue({
@@ -140,6 +171,60 @@ describe("SoloTutor", () => {
     await waitFor(() => screen.getByText(/persisted advice/i));
     const stored = JSON.parse(localStorage.getItem("guitarmode:solo-tutor:v1") ?? "[]");
     expect(stored.some((m: { content: string }) => m.content === "Persisted advice.")).toBe(true);
+  });
+
+  it("renders a streamed reply as chunks arrive", async () => {
+    mockFetchStream(["Use ", "more ", "space."]);
+    render(<SoloTutor />);
+    typeMessage("How?");
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/use more space\./i)).toBeTruthy();
+    });
+  });
+
+  it("treats an empty stream as an error", async () => {
+    mockFetchStream([]);
+    render(<SoloTutor />);
+    typeMessage("hi");
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+    await waitFor(() => screen.getByText(/empty response/i));
+  });
+
+  it("shows a Regenerate button after a reply and re-requests on click", async () => {
+    let calls = 0;
+    const enc = new TextEncoder();
+    global.fetch = vi.fn().mockImplementation(async () => {
+      calls++;
+      return {
+        ok: true,
+        body: new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(enc.encode(calls === 1 ? "First answer." : "Second answer."));
+            c.close();
+          },
+        }),
+      } as unknown as Response;
+    });
+    render(<SoloTutor />);
+    typeMessage("teach me");
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+    await waitFor(() => screen.getByText(/first answer/i));
+    fireEvent.click(screen.getByRole("button", { name: /regenerate/i }));
+    await waitFor(() => screen.getByText(/second answer/i));
+    expect(calls).toBe(2);
+    // The old reply should be gone (replaced, not appended).
+    expect(screen.queryByText(/first answer/i)).toBeNull();
+  });
+
+  it("renders a fretboard with a Play lick button when the reply contains tab", async () => {
+    mockFetchReply(`Here is a lick:\n${SIX_LINE_TAB}\nHave fun.`);
+    const { container } = render(<SoloTutor />);
+    typeMessage("give me a lick");
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+    await waitFor(() => screen.getByText(/lick on the fretboard/i));
+    expect(screen.getByRole("button", { name: /play lick/i })).toBeTruthy();
+    expect(container.querySelector("svg")).not.toBeNull();
   });
 
   it("Clear empties the transcript and storage", async () => {
